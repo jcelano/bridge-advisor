@@ -9,10 +9,14 @@ services:
     name: bridge-advisor
     runtime: node
     plan: free
+#    buildCommand: |
+#      npm install
+#      cd react-app && npm install && npx vite build
+#    startCommand: npm run start:react
     buildCommand: |
       npm install
-      cd react-app && npm install && npx vite build
-    startCommand: npm run start:react
+      cd svelte-app && npm install && npx vite build
+    startCommand: npm run start:svelte
     envVars:
       - key: ANTHROPIC_API_KEY
         sync: false  # You'll be prompted to enter this
@@ -22,12 +26,8 @@ services:
         value: production
       - key: AUTH_ENABLED
         value: "true"
+#      - key: SERVE_DIR
+#        value: dist-react
       - key: SERVE_DIR
         value: dist-react
 
-    # To deploy Svelte instead, change buildCommand and startCommand:
-    # buildCommand: |
-    #   npm install
-    #   cd svelte-app && npm install && npx vite build
-    # startCommand: npm run start:svelte
-    # And set SERVE_DIR to dist-svelte
