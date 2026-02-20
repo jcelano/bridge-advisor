@@ -7,5 +7,6 @@ data/
 .DS_Store
 *.log
 /.idea/
+
 # SvelteKit
-svelte-app/.sveltekit/
+svelte-app/.svelte-kit/
