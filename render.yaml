@@ -14,8 +14,8 @@ services:
 #      cd react-app && npm install && npx vite build
 #    startCommand: npm run start:react
     buildCommand: |
-      npm install
-      cd svelte-app && npm install && npx vite build
+      npm install --include=dev
+      cd svelte-app && npm install --include=dev && npx vite build
     startCommand: npm run start:svelte
     envVars:
       - key: ANTHROPIC_API_KEY
