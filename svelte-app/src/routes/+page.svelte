@@ -15,7 +15,7 @@
   import MarkdownResponse from '$lib/components/MarkdownResponse.svelte';
 
   // ── State ─────────────────────────────────────────────
-  let tab = $state('manual');
+  let tab = $state('pbn');
   let pbnText = $state('');
   let mySeat = $state('South');
   let dealer = $state('South');
