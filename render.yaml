@@ -29,5 +29,5 @@ services:
 #      - key: SERVE_DIR
 #        value: dist-react
       - key: SERVE_DIR
-        value: dist-react
+        value: dist-svelte
 
