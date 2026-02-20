@@ -1,0 +1,33 @@
+# render.yaml — Render Blueprint for Bridge Advisor
+# Deploy with: https://render.com/deploy
+#
+# This deploys the Express server which serves both the API
+# and the built frontend (React or Svelte).
+
+services:
+  - type: web
+    name: bridge-advisor
+    runtime: node
+    plan: free
+    buildCommand: |
+      npm install
+      cd react-app && npm install && npx vite build
+    startCommand: npm run start:react
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false  # You'll be prompted to enter this
+      - key: JWT_SECRET
+        generateValue: true  # Render auto-generates a random secret
+      - key: NODE_ENV
+        value: production
+      - key: AUTH_ENABLED
+        value: "true"
+      - key: SERVE_DIR
+        value: dist-react
+
+    # To deploy Svelte instead, change buildCommand and startCommand:
+    # buildCommand: |
+    #   npm install
+    #   cd svelte-app && npm install && npx vite build
+    # startCommand: npm run start:svelte
+    # And set SERVE_DIR to dist-svelte

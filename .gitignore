@@ -1,0 +1,8 @@
+node_modules/
+dist/
+dist-react/
+dist-svelte/
+.env
+data/
+.DS_Store
+*.log

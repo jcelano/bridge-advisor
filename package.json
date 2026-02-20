@@ -1,0 +1,39 @@
+{
+  "name": "bridge-advisor",
+  "version": "1.0.0",
+  "description": "AI-powered bridge analysis tool - React & Svelte 5 frontends with shared Express backend",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "install:all": "npm install && cd react-app && npm install && cd ../svelte-app && npm install",
+
+    "dev:server": "node server/index.js",
+    "dev:react": "cd react-app && npx vite",
+    "dev:svelte": "cd svelte-app && npx vite dev --port 5174",
+
+    "react": "concurrently \"npm run dev:server\" \"npm run dev:react\"",
+    "svelte": "concurrently \"npm run dev:server\" \"npm run dev:svelte\"",
+
+    "build:react": "cd react-app && npx vite build",
+    "build:svelte": "cd svelte-app && npx vite build",
+
+    "start:react": "SERVE_DIR=dist-react NODE_ENV=production node server/index.js",
+    "start:svelte": "SERVE_DIR=dist-svelte NODE_ENV=production node server/index.js",
+
+    "users": "node server/manage-users.js",
+    "users:add": "node server/manage-users.js add",
+    "users:list": "node server/manage-users.js list",
+    "users:remove": "node server/manage-users.js remove"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
