@@ -20,12 +20,29 @@ const JWT_EXPIRY = process.env.JWT_EXPIRY || '7d';
 
 // ── User Storage (JSON file — fine for 2-10 users) ───────────
 export function loadUsers() {
-  if (!existsSync(USERS_FILE)) return [];
-  try {
-    return JSON.parse(readFileSync(USERS_FILE, 'utf-8'));
-  } catch {
-    return [];
+  let users = [];
+
+  // 1. Load users from the JSON file
+  if (existsSync(USERS_FILE)) {
+    try {
+      users = JSON.parse(readFileSync(USERS_FILE, 'utf-8'));
+    } catch {
+      users = [];
+    }
   }
+
+  // 2. Inject the GUEST_USER from ENV if it exists
+  if (process.env.GUEST_USER) {
+    users.push({
+      email: process.env.GUEST_USER,
+      password: process.env.GUEST_PASSWORD,
+      name: "Guest User",
+      createdAt: new Date().toISOString(),
+      isGuest: true // Useful flag for UI/Permissions
+    });
+  }
+
+  return users;
 }
 
 function saveUsers(users) {

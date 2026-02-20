@@ -24,6 +24,10 @@ services:
         generateValue: true  # Render auto-generates a random secret
       - key: NODE_ENV
         value: production
+      - key: GUEST_USER
+        value: guest@local
+      - key: GUEST_PASSWORD
+        sync: false  # You'll be prompted to enter this
       - key: AUTH_ENABLED
         value: "false"
 #      - key: SERVE_DIR
