@@ -133,6 +133,7 @@ function BridgeAdvisor({ user, onLogout }) {
     played: tricks ? tricks.split('\n').filter(t => t.trim()) : (parsedPBN?.played || []),
     dummySeat: showDummy ? dummySeat : null,
     declarer: parsedPBN?.declarer || '',
+    result: parsedPBN?.result || '',
   });
 
   // ── Get Advice ────────────────────────────────────────

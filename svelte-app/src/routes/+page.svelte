@@ -96,6 +96,7 @@
       played: tricks ? tricks.split('\n').filter(t => t.trim()) : (parsedPBNData?.played || []),
       dummySeat: showDummy ? dummySeat : null,
       declarer: parsedPBNData?.declarer || '',
+      result: parsedPBNData?.result || '',
     };
     if (showDummy) gs.deal[SEAT_KEY[dummySeat]] = dummyHand;
     return gs;
