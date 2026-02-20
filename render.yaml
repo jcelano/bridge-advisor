@@ -29,7 +29,7 @@ services:
       - key: GUEST_PASSWORD
         sync: false  # You'll be prompted to enter this
       - key: AUTH_ENABLED
-        value: "false"
+        value: "true"
 #      - key: SERVE_DIR
 #        value: dist-react
       - key: SERVE_DIR
