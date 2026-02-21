@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Card background with rounded corners -->
+  <rect width="512" height="512" rx="80" ry="80" fill="#0c1219"/>
+  <!-- Gold border -->
+  <rect x="18" y="18" width="476" height="476" rx="66" ry="66" fill="none" stroke="#d4af37" stroke-width="16"/>
+
+  <!-- Spade suit shape -->
+  <!-- Main spade body: two circles + inverted triangle -->
+  <!-- Left lobe -->
+  <circle cx="196" cy="230" r="88" fill="#d4af37"/>
+  <!-- Right lobe -->
+  <circle cx="316" cy="230" r="88" fill="#d4af37"/>
+  <!-- Top point -->
+  <polygon points="256,100 324,218 188,218" fill="#d4af37"/>
+  <!-- Bottom point (stem) -->
+  <path d="M226,310 Q256,380 206,410 L306,410 Q256,380 286,310 Z" fill="#d4af37"/>
+
+  <!-- Small suit symbols in corners -->
+  <text x="42" y="96" font-family="serif" font-size="72" fill="#d4af37" opacity="0.5">♠</text>
+  <text x="470" y="480" font-family="serif" font-size="72" fill="#d4af37" opacity="0.5" text-anchor="end">♠</text>
+</svg>
