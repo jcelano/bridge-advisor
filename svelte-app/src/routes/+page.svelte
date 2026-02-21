@@ -6,7 +6,7 @@
   } from '$lib/bridge/constants.js';
   import { parsePBN, generatePBN } from '$lib/bridge/pbn.js';
   import { buildPrompt } from '$lib/bridge/prompt.js';
-  import { getAdvice, healthCheck, getHistory } from '$lib/api.js';
+  import { getAdvice, healthCheck, getHistory, shareHistoryEntry } from '$lib/api.js';
   import HandEditor from '$lib/components/HandEditor.svelte';
   import HandDisplay from '$lib/components/HandDisplay.svelte';
   import BiddingBox from '$lib/components/BiddingBox.svelte';
@@ -54,6 +54,22 @@
   let savedHistory = $state(null);
   let savedLoading = $state(false);
   let savedExpanded = $state(null);
+  let shareStatus = $state({});   // { [entryId]: 'copying' | 'copied' | 'error' }
+
+  async function handleShare(entryId) {
+    shareStatus = { ...shareStatus, [entryId]: 'copying' };
+    try {
+      const result = await shareHistoryEntry(entryId);
+      if (!result?.token) throw new Error('no token');
+      const url = `${window.location.origin}/share/${result.token}`;
+      await navigator.clipboard.writeText(url);
+      shareStatus = { ...shareStatus, [entryId]: 'copied' };
+      setTimeout(() => { shareStatus = { ...shareStatus, [entryId]: null }; }, 2500);
+    } catch {
+      shareStatus = { ...shareStatus, [entryId]: 'error' };
+      setTimeout(() => { shareStatus = { ...shareStatus, [entryId]: null }; }, 2500);
+    }
+  }
 
   async function loadSavedHistory() {
     savedLoading = true;
@@ -401,22 +417,36 @@
     {#if savedHistory?.entries}
       {#each savedHistory.entries as entry (entry.id)}
         <div class="saved-entry">
-          <button class="saved-summary" onclick={() => savedExpanded = savedExpanded === entry.id ? null : entry.id}>
-            <div class="saved-left">
-              <span class="saved-type" class:analyze={entry.adviceType === 'analyze'}
-                class:bid={entry.adviceType === 'bid'}>{entry.adviceType}</span>
-              {#if entry.contract}<span class="saved-contract">{entry.contract}</span>{/if}
-              {#if entry.handSummary}<span class="saved-hand">{entry.handSummary.split('|').pop()?.trim()}</span>{/if}
-            </div>
-            <div class="saved-right">
-              <span class="saved-date">
-                {new Date(entry.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-                {' '}
-                {new Date(entry.timestamp).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
-              </span>
-              <span class="saved-arrow">{savedExpanded === entry.id ? '▾' : '▸'}</span>
-            </div>
-          </button>
+          <div class="saved-summary-row">
+            <button class="saved-summary" onclick={() => savedExpanded = savedExpanded === entry.id ? null : entry.id}>
+              <div class="saved-left">
+                <span class="saved-type" class:analyze={entry.adviceType === 'analyze'}
+                  class:bid={entry.adviceType === 'bid'}>{entry.adviceType}</span>
+                {#if entry.contract}<span class="saved-contract">{entry.contract}</span>{/if}
+                {#if entry.handSummary}<span class="saved-hand">{entry.handSummary.split('|').pop()?.trim()}</span>{/if}
+              </div>
+              <div class="saved-right">
+                <span class="saved-date">
+                  {new Date(entry.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                  {' '}
+                  {new Date(entry.timestamp).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
+                </span>
+                <span class="saved-arrow">{savedExpanded === entry.id ? '▾' : '▸'}</span>
+              </div>
+            </button>
+            <button
+              class="share-btn"
+              class:copied={shareStatus[entry.id] === 'copied'}
+              class:error={shareStatus[entry.id] === 'error'}
+              onclick={(e) => { e.stopPropagation(); handleShare(entry.id); }}
+              title="Copy shareable link"
+            >
+              {#if shareStatus[entry.id] === 'copying'}⏳
+              {:else if shareStatus[entry.id] === 'copied'}✓ Copied!
+              {:else if shareStatus[entry.id] === 'error'}✗ Error
+              {:else}🔗 Share{/if}
+            </button>
+          </div>
 
           {#if savedExpanded === entry.id}
             <div class="saved-details">
@@ -699,11 +729,21 @@
   .history-text { color: #b0d0b0; font-size: 13px; line-height: 1.7; }
 
   .saved-entry { background: #0a120a; border-radius: 8px; border: 1px solid #1a2a1a; margin-bottom: 8px; overflow: hidden; }
+  .saved-summary-row { display: flex; align-items: center; }
   .saved-summary {
-    width: 100%; padding: 10px 14px; cursor: pointer; display: flex;
+    flex: 1; padding: 10px 14px; cursor: pointer; display: flex;
     justify-content: space-between; align-items: center;
     background: transparent; border: none; color: inherit; text-align: left;
   }
+  .share-btn {
+    flex-shrink: 0; margin: 6px 10px 6px 0;
+    padding: 4px 10px; font-size: 11px; border-radius: 5px; cursor: pointer;
+    background: #0d1a1a; border: 1px solid #1a3a3a; color: #6a9aaa;
+    white-space: nowrap; transition: background 0.15s, color 0.15s;
+  }
+  .share-btn:hover { background: #112525; color: #8abccc; }
+  .share-btn.copied { background: #0d1f0d; border-color: #1a3a1a; color: #8bdb6a; }
+  .share-btn.error { background: #1f0d0d; border-color: #3a1a1a; color: #e66; }
   .saved-left { display: flex; align-items: center; gap: 8px; }
   .saved-type {
     display: inline-block; padding: 2px 8px; border-radius: 4px;

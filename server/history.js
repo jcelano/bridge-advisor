@@ -1,4 +1,9 @@
+import { randomBytes } from 'crypto';
 import { query, getOne, getAll } from './db.js';
+
+function makeShareToken() {
+  return randomBytes(9).toString('base64url'); // URL-safe, no +/=/
+}
 
 /**
  * Add a history entry.
@@ -95,6 +100,49 @@ export async function getEntry(email, id) {
      FROM history
      WHERE id = $1 AND user_email = LOWER($2)`,
     [id, email]
+  );
+}
+
+/**
+ * Generate (or return existing) share token for an entry.
+ * Scoped to user so you can't share someone else's entry.
+ */
+export async function createShareToken(email, id) {
+  // First check if a valid token already exists
+  const existing = await getOne(
+    `SELECT share_token FROM history WHERE id = $1 AND user_email = LOWER($2)`,
+    [id, email]
+  );
+  if (!existing) return null; // entry not found or not owned by user
+
+  // Return existing token if it's already URL-safe
+  if (existing.share_token && /^[A-Za-z0-9_-]+$/.test(existing.share_token)) {
+    return existing.share_token;
+  }
+
+  // Generate a fresh URL-safe token in Node (works with any Postgres version)
+  const token = makeShareToken();
+  await query(
+    `UPDATE history SET share_token = $1 WHERE id = $2 AND user_email = LOWER($3)`,
+    [token, id, email]
+  );
+  return token;
+}
+
+/**
+ * Get a single entry by its public share token (no auth required).
+ */
+export async function getSharedEntry(token) {
+  return getOne(
+    `SELECT
+       history.id, history.advice_type as "adviceType", history.contract, history.dealer, history.vulnerability,
+       history.my_seat as "mySeat", history.declarer, history.hand_summary as "handSummary",
+       history.pbn, history.response, history.model, history.created_at as timestamp,
+       users.name as "userName"
+     FROM history
+     LEFT JOIN users ON users.email = history.user_email
+     WHERE history.share_token = $1`,
+    [token]
   );
 }
 

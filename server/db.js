@@ -69,6 +69,9 @@ const SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_history_created_at ON history(created_at DESC);
 
   ALTER TABLE history ADD COLUMN IF NOT EXISTS pbn TEXT;
+  ALTER TABLE history ADD COLUMN IF NOT EXISTS share_token TEXT UNIQUE;
+
+  CREATE INDEX IF NOT EXISTS idx_history_share_token ON history(share_token);
 `;
 
 export async function initSchema() {

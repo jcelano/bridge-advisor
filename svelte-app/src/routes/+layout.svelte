@@ -1,5 +1,6 @@
 <script>
   import { onMount } from 'svelte';
+  import { page } from '$app/stores';
   import { verifySession, getAuthStatus, logout as doLogout } from '$lib/api.js';
   import Login from '$lib/components/Login.svelte';
   import '../app.css';
@@ -12,7 +13,11 @@
   let authRequired = $state(true);
   let user = $state(null);
 
+  // Share pages are fully public — skip auth entirely
+  let isSharePage = $derived($page.url.pathname.startsWith('/share/'));
+
   onMount(async () => {
+    if (isSharePage) { authChecked = true; return; }
     const status = await getAuthStatus();
     authRequired = status.authEnabled;
     if (status.authEnabled) {
@@ -28,7 +33,9 @@
   function handleLogout() { doLogout(); user = null; }
 </script>
 
-{#if !authChecked}
+{#if isSharePage}
+  {@render children()}
+{:else if !authChecked}
   <div class="loading">Loading...</div>
 {:else if authRequired && !user}
   <Login onlogin={handleLogin} />

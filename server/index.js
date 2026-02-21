@@ -5,7 +5,7 @@ import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { requireAuth, loginUser, verifyToken } from './auth.js';
-import { addEntry, getEntries, getEntry, deleteEntry, clearHistory } from './history.js';
+import { addEntry, getEntries, getEntry, deleteEntry, clearHistory, createShareToken, getSharedEntry } from './history.js';
 import { initSchema } from './db.js';
 
 dotenv.config();
@@ -221,6 +221,35 @@ app.delete('/api/history', requireAuth, (req, res) => {
   clearHistory(email)
     .then(() => res.json({ cleared: true }))
     .catch(err => res.status(500).json({ error: err.message || 'Failed to clear history' }));
+});
+
+// ── Share Routes ───────────────────────────────────────────────
+
+// Generate (or return existing) share token for an entry — auth required
+app.post('/api/history/:id/share', requireAuth, async (req, res) => {
+  const email = req.user?.email;
+  if (!email) return res.status(401).json({ error: 'Not authenticated' });
+
+  try {
+    const token = await createShareToken(email, req.params.id);
+    if (!token) return res.status(404).json({ error: 'Entry not found' });
+    res.json({ token, url: `/share/${token}` });
+  } catch (err) {
+    console.error('Share token error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Fetch a shared entry by token — fully public
+app.get('/api/share/:token', async (req, res) => {
+  try {
+    const entry = await getSharedEntry(req.params.token);
+    if (!entry) return res.status(404).json({ error: 'Shared entry not found' });
+    res.json(entry);
+  } catch (err) {
+    console.error('Share lookup error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ── Health check (public) ─────────────────────────────────────

@@ -140,6 +140,19 @@ export async function deleteHistoryEntry(id) {
   return res.ok;
 }
 
+export async function shareHistoryEntry(id) {
+  const res = await fetch(`${API_BASE}/history/${id}/share`, {
+    method: 'POST',
+    headers: authHeaders(),
+  });
+  return res.ok ? res.json() : null;
+}
+
+export async function getSharedEntry(token) {
+  const res = await fetch(`${API_BASE}/share/${token}`);
+  return res.ok ? res.json() : null;
+}
+
 export async function clearAllHistory() {
   const res = await fetch(`${API_BASE}/history`, {
     method: 'DELETE',
