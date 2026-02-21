@@ -6,7 +6,7 @@
   } from '$lib/bridge/constants.js';
   import { parsePBN, generatePBN } from '$lib/bridge/pbn.js';
   import { buildPrompt } from '$lib/bridge/prompt.js';
-  import { getAdvice, healthCheck, getHistory, shareHistoryEntry } from '$lib/api.js';
+  import { getAdvice, healthCheck, getHistory, shareHistoryEntry, unshareHistoryEntry } from '$lib/api.js';
   import HandEditor from '$lib/components/HandEditor.svelte';
   import HandDisplay from '$lib/components/HandDisplay.svelte';
   import BiddingBox from '$lib/components/BiddingBox.svelte';
@@ -54,13 +54,15 @@
   let savedHistory = $state(null);
   let savedLoading = $state(false);
   let savedExpanded = $state(null);
-  let shareStatus = $state({});   // { [entryId]: 'copying' | 'copied' | 'error' }
+  let shareStatus = $state({});   // { [entryId]: 'copying' | 'copied' | 'error' | 'revoking' | 'revoked' }
+  let sharedTokens = $state({});  // { [entryId]: token } — tracks which entries have an active share link
 
   async function handleShare(entryId) {
     shareStatus = { ...shareStatus, [entryId]: 'copying' };
     try {
       const result = await shareHistoryEntry(entryId);
       if (!result?.token) throw new Error('no token');
+      sharedTokens = { ...sharedTokens, [entryId]: result.token };
       const url = `${window.location.origin}/share/${result.token}`;
       await navigator.clipboard.writeText(url);
       shareStatus = { ...shareStatus, [entryId]: 'copied' };
@@ -69,6 +71,28 @@
       shareStatus = { ...shareStatus, [entryId]: 'error' };
       setTimeout(() => { shareStatus = { ...shareStatus, [entryId]: null }; }, 2500);
     }
+  }
+
+  async function handleUnshare(entryId) {
+    shareStatus = { ...shareStatus, [entryId]: 'revoking' };
+    try {
+      await unshareHistoryEntry(entryId);
+      const { [entryId]: _, ...rest } = sharedTokens;
+      sharedTokens = rest;
+      shareStatus = { ...shareStatus, [entryId]: 'revoked' };
+      setTimeout(() => { shareStatus = { ...shareStatus, [entryId]: null }; }, 2500);
+    } catch {
+      shareStatus = { ...shareStatus, [entryId]: 'error' };
+      setTimeout(() => { shareStatus = { ...shareStatus, [entryId]: null }; }, 2500);
+    }
+  }
+
+  function seedSharedTokens(entries) {
+    const tokens = {};
+    for (const e of entries) {
+      if (e.shareToken) tokens[e.id] = e.shareToken;
+    }
+    sharedTokens = { ...sharedTokens, ...tokens };
   }
 
   async function loadSavedHistory() {
@@ -80,6 +104,7 @@
           ...e,
           parsedPbn: e.pbn ? safeParsePbn(e.pbn) : null,
         }));
+        seedSharedTokens(data.entries);
       }
       savedHistory = data;
     } catch {
@@ -332,7 +357,7 @@
   {#if history.length > 0}
     <button class="tab" class:active={tab === 'history'} onclick={() => tab = 'history'}>This Hand ({history.length})</button>
   {/if}
-  <button class="tab" class:active={tab === 'saved'} onclick={() => { tab = 'saved'; if (!savedHistory) loadSavedHistory(); }}>Past Sessions</button>
+  <button class="tab" class:active={tab === 'saved'} onclick={() => { tab = 'saved'; if (!savedHistory) loadSavedHistory(); }}>Explore Hand History</button>
 </div>
 
 <!-- PBN Tab -->
@@ -391,11 +416,11 @@
   </section>
 {/if}
 
-<!-- Past Sessions Tab -->
+<!-- Explore Hand History Tab (formerly Past Sessions) -->
 {#if tab === 'saved'}
   <section class="section">
     <div class="section-header" style="margin-bottom: 12px">
-      <h2 class="s-title">Past Sessions</h2>
+      <h2 class="s-title">Explore Hand History</h2>
       <div class="row">
         <button class="btn sm" onclick={loadSavedHistory}>Refresh</button>
       </div>
@@ -434,18 +459,33 @@
                 <span class="saved-arrow">{savedExpanded === entry.id ? '▾' : '▸'}</span>
               </div>
             </button>
-            <button
-              class="share-btn"
-              class:copied={shareStatus[entry.id] === 'copied'}
-              class:error={shareStatus[entry.id] === 'error'}
-              onclick={(e) => { e.stopPropagation(); handleShare(entry.id); }}
-              title="Copy shareable link"
-            >
-              {#if shareStatus[entry.id] === 'copying'}⏳
-              {:else if shareStatus[entry.id] === 'copied'}✓ Copied!
-              {:else if shareStatus[entry.id] === 'error'}✗ Error
-              {:else}🔗 Share{/if}
-            </button>
+            {#if sharedTokens[entry.id]}
+              <button
+                class="share-btn unshare"
+                class:revoked={shareStatus[entry.id] === 'revoked'}
+                class:error={shareStatus[entry.id] === 'error'}
+                onclick={(e) => { e.stopPropagation(); handleUnshare(entry.id); }}
+                title="Revoke shared link"
+              >
+                {#if shareStatus[entry.id] === 'revoking'}⏳
+                {:else if shareStatus[entry.id] === 'revoked'}✓ Unshared
+                {:else if shareStatus[entry.id] === 'error'}✗ Error
+                {:else}✕ Unshare{/if}
+              </button>
+            {:else}
+              <button
+                class="share-btn"
+                class:copied={shareStatus[entry.id] === 'copied'}
+                class:error={shareStatus[entry.id] === 'error'}
+                onclick={(e) => { e.stopPropagation(); handleShare(entry.id); }}
+                title="Copy shareable link"
+              >
+                {#if shareStatus[entry.id] === 'copying'}⏳
+                {:else if shareStatus[entry.id] === 'copied'}✓ Copied!
+                {:else if shareStatus[entry.id] === 'error'}✗ Error
+                {:else}🔗 Share{/if}
+              </button>
+            {/if}
           </div>
 
           {#if savedExpanded === entry.id}
@@ -490,6 +530,7 @@
             ...e,
             parsedPbn: e.pbn ? safeParsePbn(e.pbn) : null,
           }));
+          seedSharedTokens(more.entries);
         }
         savedHistory = {
           ...savedHistory,
@@ -744,6 +785,9 @@
   .share-btn:hover { background: #112525; color: #8abccc; }
   .share-btn.copied { background: #0d1f0d; border-color: #1a3a1a; color: #8bdb6a; }
   .share-btn.error { background: #1f0d0d; border-color: #3a1a1a; color: #e66; }
+  .share-btn.unshare { background: #1a1010; border-color: #3a2020; color: #a87a6a; }
+  .share-btn.unshare:hover { background: #251515; color: #c89a8a; }
+  .share-btn.unshare.revoked { background: #0d1f0d; border-color: #1a3a1a; color: #8bdb6a; }
   .saved-left { display: flex; align-items: center; gap: 8px; }
   .saved-type {
     display: inline-block; padding: 2px 8px; border-radius: 4px;

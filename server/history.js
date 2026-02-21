@@ -69,6 +69,7 @@ export async function getEntries(email, { limit = 50, offset = 0, adviceType, sc
        history.usage_input as "usageInput", history.usage_output as "usageOutput",
        history.created_at as timestamp,
        history.user_email as "userEmail",
+       history.share_token as "shareToken",
        users.name as "userName"
      FROM history
      LEFT JOIN users ON users.email = history.user_email
@@ -127,6 +128,18 @@ export async function createShareToken(email, id) {
     [token, id, email]
   );
   return token;
+}
+
+/**
+ * Revoke a share token, making the link dead.
+ * Scoped to user so you can't unshare someone else's entry.
+ */
+export async function revokeShareToken(email, id) {
+  const result = await query(
+    `UPDATE history SET share_token = NULL WHERE id = $1 AND user_email = LOWER($2)`,
+    [id, email]
+  );
+  return result.rowCount > 0;
 }
 
 /**

@@ -5,7 +5,7 @@ import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { requireAuth, loginUser, verifyToken } from './auth.js';
-import { addEntry, getEntries, getEntry, deleteEntry, clearHistory, createShareToken, getSharedEntry } from './history.js';
+import { addEntry, getEntries, getEntry, deleteEntry, clearHistory, createShareToken, revokeShareToken, getSharedEntry } from './history.js';
 import { initSchema } from './db.js';
 
 dotenv.config();
@@ -236,6 +236,21 @@ app.post('/api/history/:id/share', requireAuth, async (req, res) => {
     res.json({ token, url: `/share/${token}` });
   } catch (err) {
     console.error('Share token error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Revoke a share token — auth required
+app.delete('/api/history/:id/share', requireAuth, async (req, res) => {
+  const email = req.user?.email;
+  if (!email) return res.status(401).json({ error: 'Not authenticated' });
+
+  try {
+    const ok = await revokeShareToken(email, req.params.id);
+    if (!ok) return res.status(404).json({ error: 'Entry not found' });
+    res.json({ revoked: true });
+  } catch (err) {
+    console.error('Revoke share error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
