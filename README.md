@@ -178,16 +178,6 @@ Push to GitHub → Render auto-deploys. Your users and history are safe in Supab
    - `AUTH_ENABLED=true`
 4. Deploy
 
-### Option 3: DigitalOcean / Any VPS ($4-5/mo)
-
-```bash
-# On your server:
-git clone <your-repo>
-cd bridge-advisor
-npm run install:all
-cp .env.example .env
-# Edit .env with ANTHROPIC_API_KEY, DATABASE_URL, JWT_SECRET
-
 # Initialize database and build frontend
 npm run db:init
 npm run build:svelte
