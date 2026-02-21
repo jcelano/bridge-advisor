@@ -21,6 +21,7 @@ export function parsePBN(text) {
     played: [],
     result: '',
     scoring: '',
+    playStart: '',
   };
 
   const lines = text.split('\n');
@@ -71,6 +72,7 @@ export function parsePBN(text) {
         break;
 
       case 'Play':
+        state.playStart = value;
         state.played = parsePlayLines(lines, i + 1);
         break;
     }
@@ -174,7 +176,7 @@ export function generatePBN(state) {
   }
   
   if (state.played?.length) {
-    pbn += `[Play ""]\n`;
+    pbn += `[Play "${state.playStart || ''}"]\n`;
     state.played.forEach(trick => {
       pbn += trick + '\n';
     });

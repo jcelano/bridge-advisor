@@ -122,11 +122,18 @@
     if (handHasCards(eastHand)) deal.E = eastHand;
     if (handHasCards(southHand)) deal.S = southHand;
     if (handHasCards(westHand)) deal.W = westHand;
+    let playStart = parsedPBNData?.playStart || '';
+    if (!playStart && parsedPBNData?.declarer) {
+      const order = ['N', 'E', 'S', 'W'];
+      const idx = order.indexOf(parsedPBNData.declarer);
+      if (idx >= 0) playStart = order[(idx + 3) % 4]; // LHO leads
+    }
     const gs = {
       dealer, vulnerability: vuln, conventionSystem,
       deal,
       auction, auctionStart: SEAT_KEY[dealer], contract,
       played: tricks ? tricks.split('\n').filter(t => t.trim()) : (parsedPBNData?.played || []),
+      playStart,
       dummySeat: showDummy ? dummySeat : null,
       declarer: parsedPBNData?.declarer || '',
       result: parsedPBNData?.result || '',

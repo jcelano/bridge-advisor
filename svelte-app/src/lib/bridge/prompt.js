@@ -197,19 +197,30 @@ function analyzeTricks(playLines, trumpSuit, declarer, playStartSeat) {
   const rankOrder = '23456789TJQKA';
   const rankValue = (r) => rankOrder.indexOf(r.toUpperCase());
 
+  let leader = (playStartSeat || 'N').toUpperCase();
+  if (!seatOrder.includes(leader)) leader = 'N';
+
   for (const line of playLines) {
     // Parse 4 cards from the line (format: "C3 CK C4 C8")
     const cardTokens = line.trim().replace(/\.$/, '').split(/\s+/);
     if (cardTokens.length < 4) continue;
 
+    const startIdx = seatOrder.indexOf(leader);
+    const trickOrder = [
+      seatOrder[startIdx],
+      seatOrder[(startIdx + 1) % 4],
+      seatOrder[(startIdx + 2) % 4],
+      seatOrder[(startIdx + 3) % 4],
+    ];
+
     const cards = [];
     for (let i = 0; i < 4; i++) {
       const token = cardTokens[i];
       if (!token || token === '-') {
-        cards.push({ seat: seatOrder[i], suit: null, rank: null, raw: '-' });
+        cards.push({ seat: trickOrder[i], suit: null, rank: null, raw: '-' });
       } else {
         cards.push({
-          seat: seatOrder[i],
+          seat: trickOrder[i],
           suit: token[0].toUpperCase(),
           rank: token.slice(1).toUpperCase(),
           raw: token,
@@ -259,6 +270,8 @@ function analyzeTricks(playLines, trumpSuit, declarer, playStartSeat) {
       winner,
       leadSuit,
     });
+
+    if (winner) leader = winner;
   }
 
   return { tricks, declarerTricks, defenseTricks };
