@@ -6,15 +6,17 @@ import { SUIT_SYMBOLS, SUITS, SEAT_KEY, SEAT_NAME, countHCP, totalCards } from '
 export function buildPrompt(gameState, adviceType, mySeat) {
   const sections = [];
 
-  sections.push('Analyze the following bridge situation and provide clear, actionable advice.');
+  sections.push('You are analyzing a bridge hand. The player asking for advice is sitting ' + mySeat + '.');
+  sections.push('Use standard bridge terminology and be specific about cards and tricks.');
   sections.push('');
 
   // Game context
-  sections.push(`My Seat: ${mySeat}`);
+  sections.push('--- GAME CONTEXT ---');
+  sections.push(`Requesting player's seat: ${mySeat}`);
   sections.push(`Dealer: ${gameState.dealer || 'Unknown'}`);
   sections.push(`Vulnerability: ${gameState.vulnerability || 'None'}`);
   if (gameState.conventionSystem) {
-    sections.push(`Convention System: ${gameState.conventionSystem}`);
+    sections.push(`Bidding system: ${gameState.conventionSystem}`);
   }
   sections.push('');
 
@@ -26,30 +28,31 @@ export function buildPrompt(gameState, adviceType, mySeat) {
 
   // For full analysis of completed hands, show all four hands
   if (adviceType === 'analyze' && hasFourHands) {
-    sections.push('All Four Hands:');
+    sections.push('--- ALL FOUR HANDS ---');
     allSeats.forEach(seat => {
       const hand = deal[seat];
       const name = SEAT_NAME[seat] || seat;
       const hcp = countHCP(hand);
       const dist = SUITS.map(s => (hand[s] || []).length).join('-');
-      sections.push(`  ${name} (${hcp} HCP, ${dist}):`);
+      const isMe = seat === myKey ? ' ← requesting player' : '';
+      sections.push(`${name}${isMe} (${hcp} HCP, ${dist} shape):`);
       SUITS.forEach(s => {
-        sections.push(`    ${SUIT_SYMBOLS[s]} ${(hand[s] || []).join('') || 'void'}`);
+        sections.push(`  ${SUIT_SYMBOLS[s]} ${(hand[s] || []).join(' ') || '—'}`);
       });
+      sections.push('');
     });
-    sections.push('');
   } else {
+    sections.push('--- HANDS ---');
     // Show my hand
     const myHand = deal[myKey];
     if (myHand && SUITS.some(s => (myHand[s] || []).length > 0)) {
-      sections.push('My Hand:');
-      SUITS.forEach(s => {
-        sections.push(`  ${SUIT_SYMBOLS[s]} ${(myHand[s] || []).join('') || 'void'}`);
-      });
       const hcp = countHCP(myHand);
       const cards = totalCards(myHand);
       const distribution = SUITS.map(s => (myHand[s] || []).length).join('-');
-      sections.push(`  (${hcp} HCP, ${cards} cards, ${distribution} distribution)`);
+      sections.push(`${mySeat}'s hand (${hcp} HCP, ${cards} cards, ${distribution} shape):`);
+      SUITS.forEach(s => {
+        sections.push(`  ${SUIT_SYMBOLS[s]} ${(myHand[s] || []).join(' ') || '—'}`);
+      });
       sections.push('');
     }
 
@@ -58,13 +61,12 @@ export function buildPrompt(gameState, adviceType, mySeat) {
       const dummyKey = SEAT_KEY[gameState.dummySeat] || gameState.dummySeat[0];
       const dummyHand = deal[dummyKey];
       if (dummyHand && SUITS.some(s => (dummyHand[s] || []).length > 0)) {
-        sections.push(`Dummy (${gameState.dummySeat}):`);
-        SUITS.forEach(s => {
-          sections.push(`  ${SUIT_SYMBOLS[s]} ${(dummyHand[s] || []).join('') || 'void'}`);
-        });
         const hcp = countHCP(dummyHand);
         const distribution = SUITS.map(s => (dummyHand[s] || []).length).join('-');
-        sections.push(`  (${hcp} HCP, ${distribution} distribution)`);
+        sections.push(`Dummy — ${gameState.dummySeat} (${hcp} HCP, ${distribution} shape):`);
+        SUITS.forEach(s => {
+          sections.push(`  ${SUIT_SYMBOLS[s]} ${(dummyHand[s] || []).join(' ') || '—'}`);
+        });
         sections.push('');
       }
     }
@@ -72,21 +74,28 @@ export function buildPrompt(gameState, adviceType, mySeat) {
 
   // ── Bidding ───────────────────────────────────────────
   if (gameState.auction?.length) {
-    sections.push(`Bidding Sequence (starting with ${gameState.auctionStart || gameState.dealer || 'dealer'}):`);
     const order = ['N', 'E', 'S', 'W'];
-    const dealerIdx = order.indexOf((gameState.auctionStart || gameState.dealer || 'S')[0]);
-    const headerLine = '  ' + order.map((_, i) => order[(dealerIdx + i) % 4].padEnd(10)).join('');
+    const seatFullName = { N: 'North', E: 'East', S: 'South', W: 'West' };
+    const dealerKey = (gameState.auctionStart || gameState.dealer || 'S')[0].toUpperCase();
+    const dealerIdx = order.indexOf(dealerKey);
+    const rotated = order.map((_, i) => order[(dealerIdx + i) % 4]);
+    sections.push(`--- AUCTION (dealer: ${seatFullName[dealerKey] || dealerKey}) ---`);
+    const colWidth = 10;
+    const headerLine = rotated.map(s => seatFullName[s].padEnd(colWidth)).join('');
     sections.push(headerLine);
-    for (let i = 0; i < gameState.auction.length; i += 4) {
-      const row = gameState.auction.slice(i, i + 4).map(b => b.padEnd(10)).join('');
-      sections.push('  ' + row);
+    // Pad the first row so bids align under the correct seat column
+    const padBids = new Array(dealerIdx).fill('').concat(gameState.auction);
+    for (let i = 0; i < padBids.length; i += 4) {
+      const row = padBids.slice(i, i + 4).map(b => (b || '').padEnd(colWidth)).join('');
+      if (row.trim()) sections.push(row);
     }
     sections.push('');
   }
 
   // ── Contract ──────────────────────────────────────────
   if (gameState.contract) {
-    let contractLine = `Contract: ${gameState.contract}`;
+    sections.push('--- CONTRACT ---');
+    let contractLine = `${gameState.contract}`;
     if (gameState.declarer) contractLine += ` by ${SEAT_NAME[gameState.declarer] || gameState.declarer}`;
     sections.push(contractLine);
     sections.push('');
@@ -100,10 +109,13 @@ export function buildPrompt(gameState, adviceType, mySeat) {
 
     const analysis = analyzeTricks(gameState.played, trumpSuit, declarer, playStartSeat);
 
-    sections.push('Complete Play Record:');
+    sections.push('--- PLAY RECORD ---');
     analysis.tricks.forEach((trick, i) => {
-      const wonBy = trick.winner ? `→ won by ${SEAT_NAME[trick.winner] || trick.winner}` : '';
-      sections.push(`  Trick ${i + 1}: ${trick.cards.join('  ')}  ${wonBy}`);
+      const cardDesc = trick.seatCards
+        ? trick.seatCards.map(sc => `${SEAT_NAME[sc.seat] || sc.seat}:${sc.raw}`).join('  ')
+        : trick.cards.join('  ');
+      const wonBy = trick.winner ? ` → won by ${SEAT_NAME[trick.winner] || trick.winner}` : '';
+      sections.push(`  Trick ${i + 1}: ${cardDesc}${wonBy}`);
     });
     sections.push('');
 
@@ -267,6 +279,7 @@ function analyzeTricks(playLines, trumpSuit, declarer, playStartSeat) {
 
     tricks.push({
       cards: cards.map(c => c.raw),
+      seatCards: cards.map(c => ({ seat: c.seat, raw: c.raw })),
       winner,
       leadSuit,
     });
@@ -317,15 +330,23 @@ Recommend a specific card and explain the line of play.`,
 
     analyze: `Give a complete post-mortem analysis of this hand.
 
-Cover:
-- Was the bidding reasonable? What would you have bid differently?
-- Evaluate the opening lead
-- Assess the declarer play — was the right line chosen?
-- Assess the defense — were there missed opportunities?
-- Note the actual result (made or set) and whether the optimal result differed
-- What lessons can be learned from this hand?
+Structure your response as follows:
 
-Be specific and constructive. Reference specific cards and tricks in your analysis.`,
+**Bidding** — Was the auction reasonable given the system in use? What would expert bidding look like?
+**Opening Lead** — Was the lead correct? What was the best lead and why?
+**Declarer Play** — Was the right line chosen? Identify any errors or missed opportunities.
+**Defense** — Did the defenders find the best play throughout? Any missed shots?
+**Result** — What was the actual result vs. the double-dummy optimal result?
+**Lessons** — One or two key takeaways from this hand.
+
+**Grades**
+End your analysis with a "Grades" section using letter grades (A through F):
+- Bidding (North-South): [grade] — one-sentence justification
+- Bidding (East-West): [grade] — one-sentence justification
+- Declarer Play: [grade] — one-sentence justification
+- Defense: [grade] — one-sentence justification
+
+Be specific and constructive. Reference exact cards and trick numbers.`,
   };
 
   return questions[adviceType] || questions.bid;
