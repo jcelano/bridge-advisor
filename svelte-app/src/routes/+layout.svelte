@@ -3,8 +3,10 @@
   import { verifySession, getAuthStatus, logout as doLogout } from '$lib/api.js';
   import Login from '$lib/components/Login.svelte';
   import '../app.css';
+  import pkg from '../../../package.json';
 
   let { children } = $props();
+  const appVersion = pkg?.version || 'dev';
 
   let authChecked = $state(false);
   let authRequired = $state(true);
@@ -53,7 +55,7 @@
   </main>
 
   <footer class="footer">
-    © 2026 The Stayman Whisperer
+    © 2026 The Stayman Whisperer · v{appVersion}
   </footer>
 {/if}
 
