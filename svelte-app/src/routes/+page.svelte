@@ -45,6 +45,10 @@
     handHasCards(northHand) || handHasCards(eastHand) || handHasCards(southHand) || handHasCards(westHand)
     || parsedPBNData !== null
   );
+  let totalSelected = $derived(
+    totalCards(northHand) + totalCards(eastHand) + totalCards(southHand) + totalCards(westHand)
+  );
+  let canGetAdvice = $derived(parsedPBNData !== null || totalSelected === 52);
 
   // Saved history (persisted on server)
   let savedHistory = $state(null);
@@ -558,7 +562,7 @@
       {/each}
     </div>
     <div class="row">
-      <button class="btn primary lg" onclick={handleGetAdvice} disabled={loading}>
+      <button class="btn primary lg" onclick={handleGetAdvice} disabled={loading || !canGetAdvice}>
         {loading ? 'Thinking...' : 'Get Advice'}
       </button>
       <button class="btn" onclick={() => showPromptPreview = !showPromptPreview}>
@@ -566,6 +570,9 @@
       </button>
       <button class="btn" onclick={resetAll}>Reset All</button>
     </div>
+    {#if !canGetAdvice}
+      <div class="preview-note">Import a PBN or complete all four hands (52 cards) to request advice.</div>
+    {/if}
     {#if showPromptPreview}
       <div class="preview-note">Preview mode: shows the prompt instead of asking The Stayman Whisperer</div>
     {/if}
