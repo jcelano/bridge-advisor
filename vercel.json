@@ -6,15 +6,15 @@
       "use": "@vercel/node"
     },
     {
-      "src": "react-app/**",
+      "src": "svelte-app/**",
       "use": "@vercel/static-build",
       "config": {
-        "distDir": "react-app/dist"
+        "distDir": "dist-svelte"
       }
     }
   ],
   "routes": [
     { "src": "/api/(.*)", "dest": "server/index.js" },
-    { "src": "/(.*)", "dest": "react-app/$1" }
+    { "src": "/(.*)", "dest": "dist-svelte/$1" }
   ]
 }

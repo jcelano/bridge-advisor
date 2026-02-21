@@ -82,14 +82,14 @@ export async function getAuthStatus() {
 }
 
 // ── Bridge API ────────────────────────────────────────────────
-export async function getAdvice(prompt, maxTokens = 1500) {
+export async function getAdvice(prompt, { maxTokens = 1500, handContext = {} } = {}) {
   const res = await fetch(`${API_BASE}/advice`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       ...authHeaders(),
     },
-    body: JSON.stringify({ prompt, maxTokens }),
+    body: JSON.stringify({ prompt, maxTokens, handContext }),
   });
 
   if (res.status === 401) {
@@ -103,6 +103,49 @@ export async function getAdvice(prompt, maxTokens = 1500) {
   }
 
   return res.json();
+}
+
+// ── History API ───────────────────────────────────────────────
+export async function getHistory({ limit = 50, offset = 0, type, scope } = {}) {
+  const params = new URLSearchParams();
+  if (limit) params.set('limit', limit);
+  if (offset) params.set('offset', offset);
+  if (type) params.set('type', type);
+  if (scope) params.set('scope', scope);
+
+  const res = await fetch(`${API_BASE}/history?${params}`, {
+    headers: authHeaders(),
+  });
+
+  if (res.status === 401) {
+    clearAuth();
+    throw new Error('Session expired. Please log in again.');
+  }
+
+  return res.ok ? res.json() : { entries: [], total: 0, hasMore: false };
+}
+
+export async function getHistoryEntry(id) {
+  const res = await fetch(`${API_BASE}/history/${id}`, {
+    headers: authHeaders(),
+  });
+  return res.ok ? res.json() : null;
+}
+
+export async function deleteHistoryEntry(id) {
+  const res = await fetch(`${API_BASE}/history/${id}`, {
+    method: 'DELETE',
+    headers: authHeaders(),
+  });
+  return res.ok;
+}
+
+export async function clearAllHistory() {
+  const res = await fetch(`${API_BASE}/history`, {
+    method: 'DELETE',
+    headers: authHeaders(),
+  });
+  return res.ok;
 }
 
 export async function healthCheck() {

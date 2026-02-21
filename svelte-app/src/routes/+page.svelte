@@ -2,11 +2,11 @@
   import { onMount } from 'svelte';
   import {
     SEATS, SEAT_KEY, SEAT_NAME, PARTNER, VULNERABILITIES,
-    emptyHand, getUsedCards, handHasCards
+    SUITS, RANKS, emptyHand, getUsedCards, handHasCards, totalCards
   } from '$lib/bridge/constants.js';
   import { parsePBN, generatePBN } from '$lib/bridge/pbn.js';
   import { buildPrompt } from '$lib/bridge/prompt.js';
-  import { getAdvice, healthCheck } from '$lib/api.js';
+  import { getAdvice, healthCheck, getHistory } from '$lib/api.js';
   import HandEditor from '$lib/components/HandEditor.svelte';
   import HandDisplay from '$lib/components/HandDisplay.svelte';
   import BiddingBox from '$lib/components/BiddingBox.svelte';
@@ -21,31 +21,52 @@
   let dealer = $state('South');
   let vuln = $state('None');
   let conventionSystem = $state('SAYC');
-  let myHand = $state(emptyHand());
-  let dummyHand = $state(emptyHand());
+  let northHand = $state(emptyHand());
+  let eastHand = $state(emptyHand());
+  let southHand = $state(emptyHand());
+  let westHand = $state(emptyHand());
   let showDummy = $state(false);
   let dummySeat = $state('North');
   let auction = $state([]);
   let contract = $state('');
   let tricks = $state('');
-  let adviceType = $state('bid');
+  let adviceType = $state('analyze');
   let response = $state('');
   let loading = $state(false);
   let parsedPBNData = $state(null);
   let showPromptPreview = $state(false);
   let serverOk = $state(null);
   let history = $state([]);
+  let currentState = $derived(buildGameState());
 
   // ── Derived ───────────────────────────────────────────
-  let usedCards = $derived(getUsedCards(myHand, dummyHand));
-  let myUsedCards = $derived(
-    new Set([...usedCards].filter(c => !(myHand[c[0]] || []).includes(c.slice(1))))
+  let usedCards = $derived(getUsedCards(northHand, eastHand, southHand, westHand));
+  let hasState = $derived(
+    handHasCards(northHand) || handHasCards(eastHand) || handHasCards(southHand) || handHasCards(westHand)
+    || parsedPBNData !== null
   );
-  let dummyUsedCards = $derived(
-    new Set([...usedCards].filter(c => !(dummyHand[c[0]] || []).includes(c.slice(1))))
-  );
-  let hasState = $derived(handHasCards(myHand) || parsedPBNData !== null);
-  let otherSeats = $derived(SEATS.filter(s => s !== mySeat));
+
+  // Saved history (persisted on server)
+  let savedHistory = $state(null);
+  let savedLoading = $state(false);
+  let savedExpanded = $state(null);
+
+  async function loadSavedHistory() {
+    savedLoading = true;
+    try {
+      const data = await getHistory({ limit: 50, scope: 'all' });
+      if (data?.entries) {
+        data.entries = data.entries.map(e => ({
+          ...e,
+          parsedPbn: e.pbn ? safeParsePbn(e.pbn) : null,
+        }));
+      }
+      savedHistory = data;
+    } catch {
+      savedHistory = { entries: [], total: 0 };
+    }
+    savedLoading = false;
+  }
 
   const adviceTypes = [
     ['bid', 'Bidding'],
@@ -64,16 +85,19 @@
     try {
       const p = parsePBN(pbnText);
       parsedPBNData = p;
+      northHand = emptyHand(); eastHand = emptyHand(); southHand = emptyHand(); westHand = emptyHand();
       if (p.dealer) dealer = SEAT_NAME[p.dealer] || 'South';
       if (p.vulnerability) vuln = p.vulnerability;
       if (p.auction?.length) auction = [...p.auction];
       if (p.contract) contract = p.contract;
-      const sk = SEAT_KEY[mySeat];
-      if (p.deal[sk]) myHand = { ...p.deal[sk] };
+      if (p.deal?.N) northHand = { ...p.deal.N };
+      if (p.deal?.E) eastHand = { ...p.deal.E };
+      if (p.deal?.S) southHand = { ...p.deal.S };
+      if (p.deal?.W) westHand = { ...p.deal.W };
       if (p.declarer) {
         const dummyKey = PARTNER[p.declarer];
         dummySeat = SEAT_NAME[dummyKey];
-        if (p.deal[dummyKey]) { dummyHand = { ...p.deal[dummyKey] }; showDummy = true; }
+        showDummy = true;
       }
       if (p.played?.length) tricks = p.played.join('\n');
       response = 'PBN imported successfully. Review the state below and ask for advice.';
@@ -82,24 +106,129 @@
 
   // ── Reset ─────────────────────────────────────────────
   function resetAll() {
-    myHand = emptyHand(); dummyHand = emptyHand(); auction = [];
+    northHand = emptyHand(); eastHand = emptyHand(); southHand = emptyHand(); westHand = emptyHand(); auction = [];
     contract = ''; tricks = ''; response = ''; parsedPBNData = null;
     showDummy = false; history = []; pbnText = '';
   }
 
   // ── Build game state ──────────────────────────────────
   function buildGameState() {
+    const deal = { ...(parsedPBNData?.deal || {}) };
+    if (handHasCards(northHand)) deal.N = northHand;
+    if (handHasCards(eastHand)) deal.E = eastHand;
+    if (handHasCards(southHand)) deal.S = southHand;
+    if (handHasCards(westHand)) deal.W = westHand;
     const gs = {
       dealer, vulnerability: vuln, conventionSystem,
-      deal: { ...(parsedPBNData?.deal || {}), [SEAT_KEY[mySeat]]: myHand },
+      deal,
       auction, auctionStart: SEAT_KEY[dealer], contract,
       played: tricks ? tricks.split('\n').filter(t => t.trim()) : (parsedPBNData?.played || []),
       dummySeat: showDummy ? dummySeat : null,
       declarer: parsedPBNData?.declarer || '',
       result: parsedPBNData?.result || '',
     };
-    if (showDummy) gs.deal[SEAT_KEY[dummySeat]] = dummyHand;
     return gs;
+  }
+
+  function cardInHand(hand, card) {
+    const suit = card[0];
+    const rank = card.slice(1);
+    return (hand[suit] || []).includes(rank);
+  }
+
+  function usedCardsExcluding(hand) {
+    return new Set([...usedCards].filter(c => !cardInHand(hand, c)));
+  }
+
+  function handForSeat(seat) {
+    switch (seat) {
+      case 'North': return northHand;
+      case 'East': return eastHand;
+      case 'South': return southHand;
+      case 'West': return westHand;
+      default: return southHand;
+    }
+  }
+
+  function setHandForSeat(seat, hand) {
+    switch (seat) {
+      case 'North': northHand = hand; break;
+      case 'East': eastHand = hand; break;
+      case 'South': southHand = hand; break;
+      case 'West': westHand = hand; break;
+      default: break;
+    }
+  }
+
+  function seatLabel(seat) {
+    return seat === mySeat ? `${seat} (My Seat)` : seat;
+  }
+
+  function safeParsePbn(pbn) {
+    try {
+      return parsePBN(pbn);
+    } catch {
+      return null;
+    }
+  }
+
+  let autoFillBlockedSeat = $state(null);
+
+  function remainingHandExcluding(seat) {
+    const hands = {
+      North: northHand,
+      East: eastHand,
+      South: southHand,
+      West: westHand,
+    };
+    const usedOther = getUsedCards(
+      ...Object.entries(hands)
+        .filter(([s]) => s !== seat)
+        .map(([, h]) => h)
+    );
+    const remaining = { S: [], H: [], D: [], C: [] };
+    SUITS.forEach(suit => {
+      remaining[suit] = RANKS.filter(rank => !usedOther.has(suit + rank));
+    });
+    return remaining;
+  }
+
+  $effect(() => {
+    const counts = {
+      North: totalCards(northHand),
+      East: totalCards(eastHand),
+      South: totalCards(southHand),
+      West: totalCards(westHand),
+    };
+    const seats = ['North', 'East', 'South', 'West'];
+    const fullSeats = seats.filter(s => counts[s] >= 13);
+    const remainingSeats = seats.filter(s => counts[s] < 13);
+
+    if (fullSeats.length === 3 && remainingSeats.length === 1) {
+      const target = remainingSeats[0];
+      if (autoFillBlockedSeat === target) return;
+      const filled = remainingHandExcluding(target);
+      if (totalCards(filled) !== counts[target]) {
+        setHandForSeat(target, filled);
+      }
+    } else if (autoFillBlockedSeat) {
+      autoFillBlockedSeat = null;
+    }
+  });
+
+  // ── Build short summary for history ─────────────────
+  function buildHandSummary(gs) {
+    const parts = [];
+    if (gs.contract) parts.push(gs.contract);
+    if (gs.declarer) parts.push(`by ${gs.declarer}`);
+    if (gs.vulnerability && gs.vulnerability !== 'None') parts.push(`Vul: ${gs.vulnerability}`);
+    const myKey = SEAT_KEY[mySeat] || mySeat[0];
+    const myHand = gs.deal?.[myKey];
+    if (myHand) {
+      const suits = ['S', 'H', 'D', 'C'].map(s => (myHand[s] || []).join('')).join('.');
+      parts.push(suits);
+    }
+    return parts.join(' | ');
   }
 
   // ── Get Advice ────────────────────────────────────────
@@ -109,7 +238,22 @@
     if (showPromptPreview) { response = 'PROMPT PREVIEW:\n\n' + prompt; return; }
     loading = true; response = '';
     try {
-      const result = await getAdvice(prompt);
+      const handContext = {
+        adviceType, contract: gs.contract || '', dealer: gs.dealer || '',
+        vulnerability: gs.vulnerability || '', mySeat, declarer: gs.declarer || '',
+        handSummary: buildHandSummary(gs),
+      };
+      const pbn = generatePBN({
+        dealer: SEAT_KEY[gs.dealer] || gs.dealer,
+        vulnerability: gs.vulnerability,
+        deal: gs.deal,
+        auction: gs.auction,
+        auctionStart: gs.auctionStart,
+        contract: gs.contract,
+        played: gs.played,
+      });
+      handContext.pbn = pbn;
+      const result = await getAdvice(prompt, { handContext });
       response = result.text;
       history = [...history, { type: adviceType, response: result.text }];
     } catch (err) { response = 'Error: ' + err.message; }
@@ -147,8 +291,9 @@
   <button class="tab" class:active={tab === 'manual'} onclick={() => tab = 'manual'}>Manual Input</button>
   <button class="tab" class:active={tab === 'pbn'} onclick={() => tab = 'pbn'}>Paste PBN</button>
   {#if history.length > 0}
-    <button class="tab" class:active={tab === 'history'} onclick={() => tab = 'history'}>History ({history.length})</button>
+    <button class="tab" class:active={tab === 'history'} onclick={() => tab = 'history'}>This Hand ({history.length})</button>
   {/if}
+  <button class="tab" class:active={tab === 'saved'} onclick={() => { tab = 'saved'; if (!savedHistory) loadSavedHistory(); }}>Past Sessions</button>
 </div>
 
 <!-- PBN Tab -->
@@ -177,12 +322,122 @@
 {#if tab === 'history'}
   <section class="section">
     <h2 class="s-title">Advice History (This Hand)</h2>
+    {#if currentState?.deal}
+      <div class="row" style="margin-bottom: 10px">
+        <HandDisplay hand={currentState.deal?.N} label="North" />
+        <HandDisplay hand={currentState.deal?.E} label="East" />
+        <HandDisplay hand={currentState.deal?.S} label="South" />
+        <HandDisplay hand={currentState.deal?.W} label="West" />
+      </div>
+    {/if}
+    {#if currentState?.auction?.length}
+      <div style="margin-bottom: 10px">
+        <div class="mini-label">Auction:</div>
+        <AuctionDisplay auction={currentState.auction} dealerSeat={currentState.dealer || 'South'} />
+      </div>
+    {/if}
     {#each history as item, i}
       <div class="history-item">
         <div class="history-label">{item.type} advice #{i + 1}</div>
         <div class="history-text"><MarkdownResponse text={item.response} /></div>
       </div>
     {/each}
+  </section>
+{/if}
+
+<!-- Past Sessions Tab -->
+{#if tab === 'saved'}
+  <section class="section">
+    <div class="section-header" style="margin-bottom: 12px">
+      <h2 class="s-title">Past Sessions</h2>
+      <div class="row">
+        <button class="btn sm" onclick={loadSavedHistory}>Refresh</button>
+      </div>
+    </div>
+    <div style="color: #4a5a6a; font-size: 12px; margin-bottom: 8px;">
+      Showing sessions from all users.
+    </div>
+
+    {#if savedLoading}
+      <div style="color: #6a8a6a; font-size: 13px">Loading...</div>
+    {/if}
+
+    {#if savedHistory && !savedLoading && savedHistory.entries?.length === 0}
+      <div style="color: #445; font-size: 13px; font-style: italic">
+        No saved sessions yet. Advice you request will be automatically saved here.
+      </div>
+    {/if}
+
+    {#if savedHistory?.entries}
+      {#each savedHistory.entries as entry (entry.id)}
+        <div class="saved-entry">
+          <button class="saved-summary" onclick={() => savedExpanded = savedExpanded === entry.id ? null : entry.id}>
+            <div class="saved-left">
+              <span class="saved-type" class:analyze={entry.adviceType === 'analyze'}
+                class:bid={entry.adviceType === 'bid'}>{entry.adviceType}</span>
+              {#if entry.contract}<span class="saved-contract">{entry.contract}</span>{/if}
+              {#if entry.handSummary}<span class="saved-hand">{entry.handSummary.split('|').pop()?.trim()}</span>{/if}
+            </div>
+            <div class="saved-right">
+              <span class="saved-date">
+                {new Date(entry.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                {' '}
+                {new Date(entry.timestamp).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
+              </span>
+              <span class="saved-arrow">{savedExpanded === entry.id ? '▾' : '▸'}</span>
+            </div>
+          </button>
+
+          {#if savedExpanded === entry.id}
+            <div class="saved-details">
+              {#if entry.parsedPbn}
+                <div class="saved-pbn">
+                  <div class="row">
+                    <HandDisplay hand={entry.parsedPbn.deal?.N} label="North" />
+                    <HandDisplay hand={entry.parsedPbn.deal?.E} label="East" />
+                    <HandDisplay hand={entry.parsedPbn.deal?.S} label="South" />
+                    <HandDisplay hand={entry.parsedPbn.deal?.W} label="West" />
+                  </div>
+                  {#if entry.parsedPbn.auction?.length}
+                    <div style="margin-top: 10px">
+                      <div class="mini-label">Auction:</div>
+                      <AuctionDisplay auction={entry.parsedPbn.auction} dealerSeat={SEAT_NAME[entry.parsedPbn.dealer] || 'South'} />
+                    </div>
+                  {/if}
+                </div>
+              {/if}
+              <div class="saved-meta">
+                {#if entry.userName || entry.userEmail}
+                  <span>User: {entry.userName || entry.userEmail}</span>
+                {/if}
+                {#if entry.mySeat}<span>Seat: {entry.mySeat}</span>{/if}
+                {#if entry.vulnerability}<span>Vul: {entry.vulnerability}</span>{/if}
+                {#if entry.declarer}<span>Declarer: {entry.declarer}</span>{/if}
+                {#if entry.model}<span>Model: {entry.model}</span>{/if}
+              </div>
+              <MarkdownResponse text={entry.response} />
+            </div>
+          {/if}
+        </div>
+      {/each}
+    {/if}
+
+    {#if savedHistory?.hasMore}
+      <button class="btn" style="width: 100%; text-align: center" onclick={async () => {
+        const more = await getHistory({ limit: 50, offset: savedHistory.entries.length, scope: 'all' });
+        if (more?.entries) {
+          more.entries = more.entries.map(e => ({
+            ...e,
+            parsedPbn: e.pbn ? safeParsePbn(e.pbn) : null,
+          }));
+        }
+        savedHistory = {
+          ...savedHistory,
+          entries: [...savedHistory.entries, ...more.entries],
+          hasMore: more.hasMore,
+        };
+      }}>Load More</button>
+    {/if}
   </section>
 {/if}
 
@@ -207,32 +462,34 @@
     </div>
   </section>
 
-  <!-- My Hand -->
-  <section class="section">
-    <h2 class="s-title">My Hand</h2>
-    <HandEditor bind:hand={myHand} usedCards={myUsedCards} label="Select your cards" />
-  </section>
-
-  <!-- Dummy -->
+  <!-- Hands -->
   <section class="section">
     <div class="section-header">
-      <h2 class="s-title">Dummy</h2>
+      <h2 class="s-title">Hands</h2>
       <div class="row">
-        {#if showDummy}
+        <label class="field-label">Dummy
           <select class="select" bind:value={dummySeat}>
-            {#each otherSeats as s}<option>{s}</option>{/each}
+            {#each SEATS as s}<option value={s}>{s}</option>{/each}
           </select>
-        {/if}
+        </label>
         <button class="btn" onclick={() => showDummy = !showDummy}>
           {showDummy ? 'Hide Dummy' : 'Show Dummy'}
         </button>
       </div>
     </div>
-    {#if showDummy}
-      <div style="margin-top: 10px">
-        <HandEditor bind:hand={dummyHand} usedCards={dummyUsedCards} label="Select dummy's cards" />
-      </div>
-    {/if}
+    <div style="color: #6a8a6a; font-size: 12px; margin-bottom: 8px;">
+      Cards already selected in another hand are disabled.
+    </div>
+    <div class="hand-grid">
+      <HandEditor bind:hand={northHand} usedCards={usedCardsExcluding(northHand)} label={seatLabel('North')}
+        onChange={() => { autoFillBlockedSeat = 'North'; }} />
+      <HandEditor bind:hand={eastHand} usedCards={usedCardsExcluding(eastHand)} label={seatLabel('East')}
+        onChange={() => { autoFillBlockedSeat = 'East'; }} />
+      <HandEditor bind:hand={southHand} usedCards={usedCardsExcluding(southHand)} label={seatLabel('South')}
+        onChange={() => { autoFillBlockedSeat = 'South'; }} />
+      <HandEditor bind:hand={westHand} usedCards={usedCardsExcluding(westHand)} label={seatLabel('West')}
+        onChange={() => { autoFillBlockedSeat = 'West'; }} />
+    </div>
   </section>
 
   <!-- Auction -->
@@ -264,16 +521,16 @@
 {/if}
 
 <!-- State Summary -->
-{#if hasState}
+{#if hasState && tab !== 'saved'}
   <section class="section">
     <div class="section-header">
       <h2 class="s-title">Current State</h2>
       <button class="btn sm" onclick={handleExportPBN}>Export PBN</button>
     </div>
     <div class="row">
-      <HandDisplay hand={myHand} label="My Hand ({mySeat})" />
+      <HandDisplay hand={handForSeat(mySeat)} label="My Hand ({mySeat})" />
       {#if showDummy}
-        <HandDisplay hand={dummyHand} label="Dummy ({dummySeat})" />
+        <HandDisplay hand={handForSeat(dummySeat)} label="Dummy ({dummySeat})" />
       {/if}
     </div>
     {#if auction.length > 0}
@@ -291,30 +548,32 @@
 {/if}
 
 <!-- Advice Request -->
-<section class="section">
-  <h2 class="s-title">Ask for Advice</h2>
-  <div class="row" style="margin-bottom: 12px">
-    {#each adviceTypes as [key, label]}
-      <button class="advice-btn" class:active={adviceType === key}
-        onclick={() => adviceType = key}>{label}</button>
-    {/each}
-  </div>
-  <div class="row">
-    <button class="btn primary lg" onclick={handleGetAdvice} disabled={loading}>
-      {loading ? 'Thinking...' : 'Get Advice'}
-    </button>
-    <button class="btn" onclick={() => showPromptPreview = !showPromptPreview}>
-      {showPromptPreview ? 'Live Mode' : 'Preview Prompt'}
-    </button>
-    <button class="btn" onclick={resetAll}>Reset All</button>
-  </div>
-  {#if showPromptPreview}
-    <div class="preview-note">Preview mode: shows the prompt instead of asking The Stayman Whisperer</div>
-  {/if}
-</section>
+{#if tab !== 'saved'}
+  <section class="section">
+    <h2 class="s-title">Ask for Advice</h2>
+    <div class="row" style="margin-bottom: 12px">
+      {#each adviceTypes as [key, label]}
+        <button class="advice-btn" class:active={adviceType === key}
+          onclick={() => adviceType = key}>{label}</button>
+      {/each}
+    </div>
+    <div class="row">
+      <button class="btn primary lg" onclick={handleGetAdvice} disabled={loading}>
+        {loading ? 'Thinking...' : 'Get Advice'}
+      </button>
+      <button class="btn" onclick={() => showPromptPreview = !showPromptPreview}>
+        {showPromptPreview ? 'Live Mode' : 'Preview Prompt'}
+      </button>
+      <button class="btn" onclick={resetAll}>Reset All</button>
+    </div>
+    {#if showPromptPreview}
+      <div class="preview-note">Preview mode: shows the prompt instead of asking The Stayman Whisperer</div>
+    {/if}
+  </section>
+{/if}
 
 <!-- Response -->
-{#if response || loading}
+{#if (response || loading) && tab !== 'saved'}
   <div class="response-box">
     <div class="response-label">{loading ? 'Analyzing...' : "The Stayman Whisperer"}</div>
     {#if loading}
@@ -401,5 +660,30 @@
     padding: 12px; margin-bottom: 10px;
   }
   .history-label { font-size: 11px; color: #6a8a6a; margin-bottom: 6px; text-transform: uppercase; font-weight: 600; }
-  .history-text { color: #b0d0b0; font-size: 13px; line-height: 1.7; white-space: pre-wrap; }
+  .history-text { color: #b0d0b0; font-size: 13px; line-height: 1.7; }
+
+  .saved-entry { background: #0a120a; border-radius: 8px; border: 1px solid #1a2a1a; margin-bottom: 8px; overflow: hidden; }
+  .saved-summary {
+    width: 100%; padding: 10px 14px; cursor: pointer; display: flex;
+    justify-content: space-between; align-items: center;
+    background: transparent; border: none; color: inherit; text-align: left;
+  }
+  .saved-left { display: flex; align-items: center; gap: 8px; }
+  .saved-type {
+    display: inline-block; padding: 2px 8px; border-radius: 4px;
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    background: #1a2020; color: #d4af37;
+  }
+  .saved-type.analyze { background: #1a1a2a; color: #aac; }
+  .saved-type.bid { background: #1a2a1a; color: #8bdb6a; }
+  .saved-contract { color: #d4af37; font-weight: 700; }
+  .saved-hand { color: #6a7a8a; font-size: 12px; font-family: monospace; }
+  .saved-right { display: flex; align-items: center; gap: 10px; }
+  .saved-date { color: #4a5a6a; font-size: 11px; }
+  .saved-arrow { color: #4a5a6a; font-size: 14px; }
+  .saved-details { padding: 0 14px 14px; border-top: 1px solid #1a2a1a; }
+  .saved-meta { display: flex; gap: 12px; flex-wrap: wrap; margin: 10px 0; font-size: 12px; color: #5a6a7a; }
+  .btn.danger { color: #e66; border-color: #3a1a1a; }
+  .hand-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+  .saved-pbn { margin: 6px 0 10px; }
 </style>

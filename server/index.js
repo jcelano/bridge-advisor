@@ -5,6 +5,8 @@ import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { requireAuth, loginUser, verifyToken } from './auth.js';
+import { addEntry, getEntries, getEntry, deleteEntry, clearHistory } from './history.js';
+import { initSchema } from './db.js';
 
 dotenv.config();
 
@@ -25,6 +27,13 @@ if (!process.env.ANTHROPIC_API_KEY) {
   process.exit(1);
 }
 
+if (!process.env.DATABASE_URL) {
+  console.error('\n❌  DATABASE_URL not found!\n');
+  console.error('   Add your Postgres connection string to .env');
+  console.error('   Example: DATABASE_URL=postgresql://user:pass@host:5432/dbname\n');
+  process.exit(1);
+}
+
 if (AUTH_ENABLED && (!process.env.JWT_SECRET || process.env.JWT_SECRET === 'bridge-advisor-dev-secret-change-me')) {
   console.warn('\n⚠️  JWT_SECRET not set or using default. Set a strong secret in .env for production.\n');
 }
@@ -38,7 +47,7 @@ app.use(cors());
 app.use(express.json());
 
 // Serve static files in production
-const SERVE_DIR = process.env.SERVE_DIR || 'dist-react';
+const SERVE_DIR = process.env.SERVE_DIR || 'dist-svelte';
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(join(__dirname, '..', SERVE_DIR)));
 }
@@ -88,13 +97,14 @@ app.get('/api/auth/status', (req, res) => {
 
 app.post('/api/advice', requireAuth, async (req, res) => {
   try {
-    const { prompt, maxTokens = 1500 } = req.body;
+    const { prompt, maxTokens = 1500, handContext } = req.body;
 
     if (!prompt) {
       return res.status(400).json({ error: 'No prompt provided' });
     }
 
     const userName = req.user?.name || 'anonymous';
+    const userEmail = req.user?.email || 'anonymous';
     console.log(`\n♠ Query from ${userName} (${prompt.length} chars)`);
 
     const message = await client.messages.create({
@@ -116,10 +126,32 @@ Format your response clearly. Use short paragraphs, not walls of text.`,
 
     console.log(`♠ Response: ${text.slice(0, 80)}...`);
 
+    // Auto-save to history
+    let historyId = null;
+    try {
+      const entry = await addEntry(userEmail, {
+        adviceType: handContext?.adviceType || 'unknown',
+        contract: handContext?.contract || '',
+        dealer: handContext?.dealer || '',
+        vulnerability: handContext?.vulnerability || '',
+        mySeat: handContext?.mySeat || '',
+        declarer: handContext?.declarer || '',
+        handSummary: handContext?.handSummary || '',
+        pbn: handContext?.pbn || '',
+        response: text,
+        model: message.model,
+        usage: message.usage,
+      });
+      historyId = entry.id;
+    } catch (e) {
+      console.warn('Failed to save history:', e.message);
+    }
+
     res.json({
       text,
       model: message.model,
       usage: message.usage,
+      historyId,
     });
   } catch (error) {
     console.error('API Error:', error.message);
@@ -138,6 +170,56 @@ Format your response clearly. Use short paragraphs, not walls of text.`,
   }
 });
 
+// ── History Routes ─────────────────────────────────────────────
+
+// List history entries
+app.get('/api/history', requireAuth, (req, res) => {
+  const email = req.user?.email;
+  if (!email) return res.status(401).json({ error: 'Not authenticated' });
+
+  const limit = Math.min(parseInt(req.query.limit) || 50, 100);
+  const offset = parseInt(req.query.offset) || 0;
+  const adviceType = req.query.type || undefined;
+  const scope = req.query.scope === 'all' ? 'all' : 'user';
+
+  getEntries(email, { limit, offset, adviceType, scope })
+    .then(result => res.json(result))
+    .catch(err => res.status(500).json({ error: err.message || 'Failed to load history' }));
+});
+
+// Get a single history entry
+app.get('/api/history/:id', requireAuth, (req, res) => {
+  const email = req.user?.email;
+  if (!email) return res.status(401).json({ error: 'Not authenticated' });
+
+  getEntry(email, req.params.id)
+    .then(entry => {
+      if (!entry) return res.status(404).json({ error: 'Entry not found' });
+      res.json(entry);
+    })
+    .catch(err => res.status(500).json({ error: err.message || 'Failed to load entry' }));
+});
+
+// Delete a single history entry
+app.delete('/api/history/:id', requireAuth, (req, res) => {
+  const email = req.user?.email;
+  if (!email) return res.status(401).json({ error: 'Not authenticated' });
+
+  deleteEntry(email, req.params.id)
+    .then(deleted => res.json({ deleted }))
+    .catch(err => res.status(500).json({ error: err.message || 'Failed to delete entry' }));
+});
+
+// Clear all history
+app.delete('/api/history', requireAuth, (req, res) => {
+  const email = req.user?.email;
+  if (!email) return res.status(401).json({ error: 'Not authenticated' });
+
+  clearHistory(email)
+    .then(() => res.json({ cleared: true }))
+    .catch(err => res.status(500).json({ error: err.message || 'Failed to clear history' }));
+});
+
 // ── Health check (public) ─────────────────────────────────────
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', model: MODEL, authEnabled: AUTH_ENABLED });
@@ -151,12 +233,22 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 // ── Start ─────────────────────────────────────────────────────
-app.listen(PORT, () => {
-  console.log(`\n♠  The Stayman Whisperer Server`);
-  console.log(`────────────────────────────`);
-  console.log(`   Server:  http://localhost:${PORT}`);
-  console.log(`   Model:   ${MODEL}`);
-  console.log(`   Auth:    ${AUTH_ENABLED ? 'ENABLED' : 'DISABLED (dev mode)'}`);
-  console.log(`   Mode:    ${process.env.NODE_ENV || 'development'}`);
-  console.log(`────────────────────────────\n`);
-});
+(async () => {
+  try {
+    await initSchema();
+  } catch (err) {
+    console.error('Failed to connect to database:', err.message);
+    process.exit(1);
+  }
+
+  app.listen(PORT, () => {
+    console.log(`\n♠  The Stayman Whisperer Server`);
+    console.log(`────────────────────────────`);
+    console.log(`   Server:  http://localhost:${PORT}`);
+    console.log(`   Model:   ${MODEL}`);
+    console.log(`   Auth:    ${AUTH_ENABLED ? 'ENABLED' : 'DISABLED (dev mode)'}`);
+    console.log(`   DB:      connected`);
+    console.log(`   Mode:    ${process.env.NODE_ENV || 'development'}`);
+    console.log(`────────────────────────────\n`);
+  });
+})();

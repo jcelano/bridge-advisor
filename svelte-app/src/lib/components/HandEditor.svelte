@@ -1,15 +1,21 @@
 <script>
   import { SUITS, RANKS, SUIT_SYMBOLS, SUIT_COLORS, countHCP, totalCards } from '$lib/bridge/constants.js';
 
-  let { hand = $bindable(), usedCards, label } = $props();
+  let { hand = $bindable(), usedCards, label, onChange } = $props();
+
+  function setHand(next) {
+    hand = next;
+    if (onChange) onChange(hand);
+  }
 
   function toggle(suit, rank) {
     const cur = hand[suit] || [];
     if (cur.includes(rank)) {
-      hand = { ...hand, [suit]: cur.filter(r => r !== rank) };
+      setHand({ ...hand, [suit]: cur.filter(r => r !== rank) });
     } else {
+      if (totalCards(hand) >= 13) return;
       const next = [...cur, rank].sort((a, b) => RANKS.indexOf(a) - RANKS.indexOf(b));
-      hand = { ...hand, [suit]: next };
+      setHand({ ...hand, [suit]: next });
     }
   }
 
@@ -26,11 +32,12 @@
         {#each RANKS as rank}
           {@const selected = (hand[suit] || []).includes(rank)}
           {@const used = !selected && usedCards.has(suit + rank)}
+          {@const maxed = !selected && cards >= 13}
           <button
-            class="card" class:selected class:used
+            class="card" class:selected class:used class:maxed
             style={selected ? `border-color: ${SUIT_COLORS[suit]}; color: ${SUIT_COLORS[suit]}` : ''}
-            disabled={used}
-            onclick={() => !used && toggle(suit, rank)}
+            disabled={used || maxed}
+            onclick={() => !(used || maxed) && toggle(suit, rank)}
           >{rank}</button>
         {/each}
       </div>
@@ -50,4 +57,5 @@
   .card:hover:not(.used) { border-color: #4a5a6a; background: #1a2530; }
   .card.selected { background: #1a2a3a; border-width: 2px; }
   .card.used { opacity: 0.25; cursor: not-allowed; background: #0a0a10; color: #222; }
+  .card.maxed { opacity: 0.35; cursor: not-allowed; background: #0a0f12; color: #2a2f36; }
 </style>

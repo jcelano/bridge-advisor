@@ -53,7 +53,7 @@
   </main>
 
   <footer class="footer">
-    The Stayman Whisperer — Works with Trickster Cards PBN Export
+    © 2026 The Stayman Whisperer
   </footer>
 {/if}
 

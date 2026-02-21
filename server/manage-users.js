@@ -1,15 +1,19 @@
 #!/usr/bin/env node
 /**
- * User management CLI for Bridge Advisor
+ * User management CLI for The Stayman Whisperer
  *
  * Usage:
  *   npm run users:add                    # Interactive add
  *   npm run users:add -- -e email -p pass -n name
  *   npm run users:list
  *   npm run users:remove -- -e email
- *   npm run users -- help
+ *   npm run db:init                      # Create tables
  */
+import dotenv from 'dotenv';
+dotenv.config();
+
 import { createUser, removeUser, listUsers } from './auth.js';
+import { initSchema, closePool } from './db.js';
 import { createInterface } from 'readline';
 
 const args = process.argv.slice(2);
@@ -31,6 +35,14 @@ async function prompt(question) {
 }
 
 async function main() {
+  if (!process.env.DATABASE_URL) {
+    console.error('\n❌ DATABASE_URL not set. Add it to your .env file.\n');
+    process.exit(1);
+  }
+
+  // Ensure tables exist
+  await initSchema();
+
   switch (command) {
     case 'add': {
       let email = getArg('-e');
@@ -57,14 +69,15 @@ async function main() {
     }
 
     case 'list': {
-      const users = listUsers();
+      const users = await listUsers();
       if (users.length === 0) {
         console.log('\nNo users yet. Add one with: npm run users:add\n');
       } else {
-        console.log(`\n♠ Bridge Advisor Users (${users.length}):`);
-        console.log('─'.repeat(50));
+        console.log(`\n♠ The Stayman Whisperer — Users (${users.length}):`);
+        console.log('─'.repeat(60));
         users.forEach(u => {
-          console.log(`  ${u.name.padEnd(20)} ${u.email.padEnd(25)} ${u.createdAt?.slice(0, 10) || ''}`);
+          const date = u.created_at ? new Date(u.created_at).toISOString().slice(0, 10) : '';
+          console.log(`  ${(u.name || '').padEnd(20)} ${u.email.padEnd(30)} ${date}`);
         });
         console.log('');
       }
@@ -80,7 +93,7 @@ async function main() {
       }
 
       try {
-        removeUser(email);
+        await removeUser(email);
         console.log(`\n✓ User ${email} removed.\n`);
       } catch (err) {
         console.error(`\n✗ ${err.message}\n`);
@@ -92,18 +105,23 @@ async function main() {
     case 'help':
     default:
       console.log(`
-♠♥♦♣  Bridge Advisor — User Management
+♠  The Stayman Whisperer — User Management
 
 Commands:
   npm run users:add       Add a new user (interactive)
   npm run users:list      List all users
   npm run users:remove    Remove a user
+  npm run db:init         Initialize database tables
 
 Flags (for scripting):
   npm run users:add -- -e user@example.com -p password123 -n "John Doe"
   npm run users:remove -- -e user@example.com
+
+Requires DATABASE_URL in .env
 `);
   }
+
+  await closePool();
 }
 
 main();

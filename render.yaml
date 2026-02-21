@@ -1,18 +1,14 @@
-# render.yaml — Render Blueprint for Bridge Advisor
+# render.yaml — Render Blueprint for The Stayman Whisperer
 # Deploy with: https://render.com/deploy
 #
 # This deploys the Express server which serves both the API
-# and the built frontend (React or Svelte).
+# and the built Svelte frontend.
 
 services:
   - type: web
     name: bridge-advisor
     runtime: node
     plan: starter
-#    buildCommand: |
-#      npm install
-#      cd react-app && npm install && npx vite build
-#    startCommand: npm run start:react
     buildCommand: |
       npm install --include=dev
       cd svelte-app && npm install --include=dev && npx vite build
@@ -20,14 +16,13 @@ services:
     envVars:
       - key: ANTHROPIC_API_KEY
         sync: false  # You'll be prompted to enter this
+      - key: DATABASE_URL
+        sync: false  # Your Supabase Postgres connection string
       - key: JWT_SECRET
         generateValue: true  # Render auto-generates a random secret
       - key: NODE_ENV
         value: production
       - key: AUTH_ENABLED
         value: "true"
-#      - key: SERVE_DIR
-#        value: dist-react
       - key: SERVE_DIR
         value: dist-svelte
-
