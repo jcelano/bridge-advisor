@@ -75,4 +75,27 @@
     border-top: 1px solid #1a2a1a;
     margin: 16px 0;
   }
+
+  .md-response :global(table) {
+    border-collapse: collapse;
+    margin: 10px 0 14px 0;
+    font-size: 13px;
+    width: auto;
+  }
+  .md-response :global(th) {
+    background: #0d1f0d;
+    color: #d4af37;
+    font-weight: 700;
+    padding: 6px 14px;
+    border: 1px solid #1a3a1a;
+    text-align: left;
+  }
+  .md-response :global(td) {
+    color: #b0d0b0;
+    padding: 5px 14px;
+    border: 1px solid #1a2a1a;
+  }
+  .md-response :global(tr:nth-child(even) td) {
+    background: #080f08;
+  }
 </style>

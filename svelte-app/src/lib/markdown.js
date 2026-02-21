@@ -25,14 +25,20 @@ export function renderMarkdown(text) {
   let inList = false;
   let listType = '';
   let inParagraph = false;
+  let tableBuffer = [];
+
+  const flushBlock = () => {
+    if (inList) { output.push(listType === 'ul' ? '</ul>' : '</ol>'); inList = false; }
+    if (inParagraph) { output.push('</p>'); inParagraph = false; }
+    if (tableBuffer.length) { output.push(renderTable(tableBuffer)); tableBuffer = []; }
+  };
 
   for (let i = 0; i < lines.length; i++) {
     let line = lines[i];
 
     // Skip lines inside code blocks (already processed)
     if (line.includes('<pre class="md-code-block">')) {
-      if (inList) { output.push(listType === 'ul' ? '</ul>' : '</ol>'); inList = false; }
-      if (inParagraph) { output.push('</p>'); inParagraph = false; }
+      flushBlock();
       // Collect until </pre>
       let block = line;
       while (!block.includes('</pre>') && i + 1 < lines.length) {
@@ -41,6 +47,20 @@ export function renderMarkdown(text) {
       }
       output.push(block);
       continue;
+    }
+
+    // Table rows: lines that start and end with |
+    if (/^\|.+\|$/.test(line.trim())) {
+      if (inList) { output.push(listType === 'ul' ? '</ul>' : '</ol>'); inList = false; }
+      if (inParagraph) { output.push('</p>'); inParagraph = false; }
+      tableBuffer.push(line.trim());
+      continue;
+    }
+
+    // Flush table if the current line is not a table row
+    if (tableBuffer.length) {
+      output.push(renderTable(tableBuffer));
+      tableBuffer = [];
     }
 
     // Apply inline formatting
@@ -116,8 +136,46 @@ export function renderMarkdown(text) {
   // Close any open tags
   if (inParagraph) output.push('</p>');
   if (inList) output.push(listType === 'ul' ? '</ul>' : '</ol>');
+  if (tableBuffer.length) output.push(renderTable(tableBuffer));
 
   return output.join('\n');
+}
+
+/**
+ * Parse a buffer of raw | ... | table lines into an HTML table.
+ * Separator rows (|---|---| etc.) are used to identify the header row.
+ */
+function renderTable(rows) {
+  const isSeparator = (r) => /^\|[-| :]+\|$/.test(r);
+  const parseRow = (r) =>
+    r.replace(/^\||\|$/g, '').split('|').map(cell => applyInline(cell.trim()));
+
+  let headerRow = null;
+  let bodyRows = [];
+  let sepFound = false;
+
+  for (const row of rows) {
+    if (isSeparator(row)) { sepFound = true; continue; }
+    if (!sepFound) {
+      // Everything before the separator is header
+      headerRow = parseRow(row);
+    } else {
+      bodyRows.push(parseRow(row));
+    }
+  }
+
+  // If no separator was found, treat first row as header anyway
+  if (!sepFound && rows.length > 0) {
+    headerRow = parseRow(rows[0]);
+    bodyRows = rows.slice(1).map(parseRow);
+  }
+
+  const thCells = (headerRow || []).map(c => `<th>${c}</th>`).join('');
+  const tbodyRows = bodyRows.map(cells =>
+    `<tr>${cells.map(c => `<td>${c}</td>`).join('')}</tr>`
+  ).join('\n');
+
+  return `<table class="md-table"><thead><tr>${thCells}</tr></thead><tbody>${tbodyRows}</tbody></table>`;
 }
 
 function applyInline(line) {
