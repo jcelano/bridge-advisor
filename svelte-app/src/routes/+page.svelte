@@ -623,27 +623,36 @@
 
 <!-- State Summary -->
 {#if hasState && tab !== 'saved'}
+  {@const allFourKnown = handHasCards(northHand) && handHasCards(eastHand) && handHasCards(southHand) && handHasCards(westHand)}
   <section class="section">
     <div class="section-header">
-      <h2 class="s-title">Current State</h2>
+      <h2 class="s-title">Current Hand</h2>
       <button class="btn sm" onclick={handleExportPBN}>Export PBN</button>
     </div>
-    <div class="row">
-      <HandDisplay hand={handForSeat(mySeat)} label="My Hand ({mySeat})" />
-      {#if showDummy}
-        <HandDisplay hand={handForSeat(dummySeat)} label="Dummy ({dummySeat})" />
-      {/if}
-    </div>
-    {#if auction.length > 0}
-      <div style="margin-top: 10px">
-        <div class="mini-label">Auction:</div>
-        <div class="row" style="gap: 4px">
-          {#each auction as bid}<BidChip {bid} />{/each}
-        </div>
+
+    {#if allFourKnown}
+      <div class="hand-grid" style="margin-bottom: 12px">
+        <HandDisplay hand={northHand} label="North" />
+        <HandDisplay hand={eastHand} label="East" />
+        <HandDisplay hand={southHand} label="South" />
+        <HandDisplay hand={westHand} label="West" />
+      </div>
+    {:else}
+      <div class="row" style="margin-bottom: 12px">
+        <HandDisplay hand={handForSeat(mySeat)} label="{mySeat} (you)" />
+        {#if showDummy}
+          <HandDisplay hand={handForSeat(dummySeat)} label="Dummy ({dummySeat})" />
+        {/if}
       </div>
     {/if}
+
+    {#if auction.length > 0}
+      <div class="mini-label" style="margin-bottom: 6px">Auction</div>
+      <AuctionDisplay {auction} dealerSeat={dealer} />
+    {/if}
+
     {#if contract}
-      <div class="contract-line">Contract: <b>{contract}</b></div>
+      <div class="contract-line" style="margin-top: 10px">Contract: <b>{contract}</b></div>
     {/if}
   </section>
 {/if}
