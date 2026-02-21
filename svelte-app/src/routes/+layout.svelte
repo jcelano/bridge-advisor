@@ -55,7 +55,7 @@
   </main>
 
   <footer class="footer">
-    © 2026 The Stayman Whisperer · v{appVersion}
+    © 2026 The Stayman Whisperer · v{appVersion} · Play bridge at <a class="footer-link" href="https://www.trickstercards.com" target="_blank" rel="noopener noreferrer">Trickster Cards</a>
   </footer>
 {/if}
 
@@ -76,4 +76,6 @@
   .logout-btn { background: none; border: none; color: #8a6a6a; cursor: pointer; font-size: 12px; text-decoration: underline; }
   .container { max-width: 860px; margin: 0 auto; padding: 16px 12px; }
   .footer { text-align: center; color: #2a3a4a; font-size: 11px; padding: 20px 0; }
+  .footer-link { color: #4a6a8a; text-decoration: none; }
+  .footer-link:hover { text-decoration: underline; }
 </style>

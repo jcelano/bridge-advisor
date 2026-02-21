@@ -85,9 +85,9 @@
   });
 
   // ── PBN Import ────────────────────────────────────────
-  function handleParsePBN() {
+  function handleParsePBN(text) {
     try {
-      const p = parsePBN(pbnText);
+      const p = parsePBN(text ?? pbnText);
       parsedPBNData = p;
       northHand = emptyHand(); eastHand = emptyHand(); southHand = emptyHand(); westHand = emptyHand();
       if (p.dealer) dealer = SEAT_NAME[p.dealer] || 'South';
@@ -106,6 +106,18 @@
       if (p.played?.length) tricks = p.played.join('\n');
       response = 'PBN imported successfully. Review the state below and ask for advice.';
     } catch (e) { response = 'Error parsing PBN: ' + e.message; }
+  }
+
+  function handleLoadPBNFile(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      pbnText = ev.target.result;
+      handleParsePBN(ev.target.result);
+    };
+    reader.readAsText(file);
+    e.target.value = '';
   }
 
   // ── Reset ─────────────────────────────────────────────
@@ -313,8 +325,15 @@
     <h2 class="s-title">Import from Trickster Cards</h2>
     <p class="help">
       In Trickster Cards, enable <b>"Review last deal"</b> in game rules.
-      After a hand: menu → <b>Current Game</b> → <b>Export Hand to PBN</b>. Paste below.
+      After a hand: menu → <b>Current Game</b> → <b>Export Hand to PBN</b>. Paste below or load a .pbn file.
     </p>
+    <div class="pbn-load-row">
+      <label class="btn secondary file-btn">
+        Load PBN File
+        <input type="file" accept=".pbn,.txt" style="display:none" onchange={handleLoadPBNFile} />
+      </label>
+      <span class="pbn-or">or paste below</span>
+    </div>
     <textarea class="textarea" bind:value={pbnText}
       placeholder={'[Event "..."]\n[Dealer "S"]\n[Vulnerable "None"]\n[Deal "N:AKQ2.J93.T87.A65 ..."]\n[Auction "S"]\n1NT Pass 3NT Pass Pass Pass'}
     ></textarea>
@@ -633,6 +652,9 @@
     min-height: 100px; resize: vertical; outline: none;
   }
   .textarea.short { min-height: 60px; }
+  .pbn-load-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .pbn-or { font-size: 12px; color: #4a5a6a; }
+  .file-btn { cursor: pointer; }
 
   .field-label { font-size: 13px; color: #6a7a8a; display: flex; align-items: center; gap: 6px; }
   .mini-label { font-size: 11px; color: #5a6a7a; margin-bottom: 4px; }
