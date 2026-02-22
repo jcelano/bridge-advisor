@@ -23,7 +23,8 @@
   const SEATS = ['N', 'E', 'S', 'W'];
   const SEAT_NAME = { N: 'North', E: 'East', S: 'South', W: 'West' };
   const SUITS = ['S', 'H', 'D', 'C'];
-  const RANK_ORDER = 'AKQJT98765432';
+  const RANK_ORDER  = 'AKQJT98765432'; // display sort: high cards first (A=0)
+  const RANK_VALUES = '23456789TJQKA'; // winner calc: higher index = higher rank (A=12)
 
   // ── Trump extraction ────────────────────────────────────────────
   function extractTrump(c) {
@@ -37,7 +38,8 @@
   const trump = $derived(extractTrump(contract));
 
   // ── Parse all tricks once ───────────────────────────────────────
-  const rankValue = r => RANK_ORDER.indexOf(r?.toUpperCase() ?? '');
+  // rankValue: higher number = stronger card (used for winner comparison)
+  const rankValue = r => RANK_VALUES.indexOf(r?.toUpperCase() ?? '');
 
   const allTricks = $derived.by(() => {
     if (!played?.length) return [];
@@ -58,7 +60,11 @@
         return { seat, suit: token[0].toUpperCase(), rank: token.slice(1).toUpperCase() };
       });
 
-      const leadSuit = cards[0].suit;
+      // Lead suit comes from the LEADER's card, not column 0.
+      // Columns are fixed for the whole hand, so after trick 1 the leader
+      // is not necessarily in column 0.
+      const leaderCard = cards.find(c => c.seat === leader);
+      const leadSuit = leaderCard?.suit || null;
       let winner = null, bestRank = -1, bestIsTrump = false;
       for (const card of cards) {
         if (!card.suit) continue;

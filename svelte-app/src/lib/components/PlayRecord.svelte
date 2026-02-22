@@ -50,8 +50,10 @@
         return { seat, suit: token[0].toUpperCase(), rank: token.slice(1).toUpperCase(), raw: token };
       });
 
-      // Lead suit = column 0 (leader's card)
-      const leadSuit = rawCards[0].suit;
+      // Lead suit comes from the LEADER's card, not column 0.
+      // Columns are fixed for the whole hand; after trick 1 leader ≠ column 0.
+      const leaderRawCard = rawCards.find(c => c.seat === leader);
+      const leadSuit = leaderRawCard?.suit || null;
 
       let winner = null, bestRank = -1, bestIsTrump = false;
       for (const card of rawCards) {

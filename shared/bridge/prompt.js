@@ -169,7 +169,7 @@ export function buildPrompt(gameState, adviceType, mySeat) {
  * Extract trump suit from contract string like "4H", "3NT", "6S"
  * Returns null for notrump.
  */
-function extractTrumpSuit(contract) {
+export function extractTrumpSuit(contract) {
   if (!contract) return null;
   const match = contract.match(/\d(NT|N|S|H|D|C)/i);
   if (!match) return null;
@@ -182,7 +182,7 @@ function extractTrumpSuit(contract) {
  * Extract the number of tricks needed to make the contract.
  * Level + 6. e.g., 4H = 10 tricks needed.
  */
-function extractTricksNeeded(contract) {
+export function extractTricksNeeded(contract) {
   if (!contract) return 0;
   const match = contract.match(/(\d)/);
   return match ? parseInt(match[1]) + 6 : 0;
@@ -197,7 +197,7 @@ function extractTricksNeeded(contract) {
  * clockwise (N→E→S→W→N). The leader rotates each trick to whoever won last.
  * So token[i] belongs to seatOrder[(leaderIdx + i) % 4].
  */
-function analyzeTricks(playLines, trumpSuit, declarer, playStartSeat) {
+export function analyzeTricks(playLines, trumpSuit, declarer, playStartSeat) {
   const seatOrder = ['N', 'E', 'S', 'W'];
   const tricks = [];
   let declarerTricks = 0;
@@ -239,8 +239,10 @@ function analyzeTricks(playLines, trumpSuit, declarer, playStartSeat) {
       };
     });
 
-    // Lead suit = the card in column 0 (the leader's card)
-    const leadSuit = cards[0].suit;
+    // Lead suit comes from the LEADER's card, not column 0.
+    // Columns are fixed for the whole hand; after trick 1 leader ≠ column 0.
+    const leaderCard = cards.find(c => c.seat === leader);
+    const leadSuit = leaderCard?.suit || null;
 
     // Determine winner
     let winner = null;
