@@ -78,7 +78,57 @@ export function parsePBN(text) {
     }
   }
 
+  // ── Derive missing fields ──────────────────────────────
+  const seatOrder = ['N', 'E', 'S', 'W'];
+
+  // If declarer is missing, infer from contract + auction.
+  // The declarer is the first player on the declaring side who bid the trump suit.
+  if (!state.declarer && state.contract && state.auctionStart && state.auction.length) {
+    const strain = state.contract.replace(/^\d/, '').replace(/X+$/, '').toUpperCase();
+    const declaringSide = inferDeclaringSide(state.auction, state.auctionStart, strain, seatOrder);
+    if (declaringSide) state.declarer = declaringSide;
+  }
+
+  // If playStart is empty, the opening leader is LHO of declarer (clockwise from declarer).
+  if (!state.playStart && state.declarer) {
+    const idx = seatOrder.indexOf(state.declarer);
+    if (idx >= 0) state.playStart = seatOrder[(idx + 1) % 4]; // LHO = one step clockwise
+  }
+
   return state;
+}
+
+/**
+ * Infer the declarer seat from the auction.
+ * The declarer is the first player on the side that won the auction
+ * who bid the final contract's strain.
+ */
+function inferDeclaringSide(auction, auctionStart, strain, seatOrder) {
+  const startIdx = seatOrder.indexOf(auctionStart);
+  if (startIdx < 0) return null;
+
+  // Find the final contract bid (last non-pass, non-double, non-redouble)
+  let finalBidIdx = -1;
+  let finalBid = null;
+  const bidRe = /^\d(NT|N|S|H|D|C)$/i;
+  for (let i = 0; i < auction.length; i++) {
+    if (bidRe.test(auction[i])) { finalBidIdx = i; finalBid = auction[i]; }
+  }
+  if (finalBidIdx < 0) return null;
+
+  const finalStrain = finalBid.slice(1).toUpperCase();
+  const winningSeat = seatOrder[(startIdx + finalBidIdx) % 4];
+  const winningSide = (winningSeat === 'N' || winningSeat === 'S') ? ['N', 'S'] : ['E', 'W'];
+
+  // Declarer = first player on winning side who bid that strain
+  for (let i = 0; i < auction.length; i++) {
+    const seat = seatOrder[(startIdx + i) % 4];
+    if (!winningSide.includes(seat)) continue;
+    const bid = auction[i];
+    if (bidRe.test(bid) && bid.slice(1).toUpperCase() === finalStrain) return seat;
+  }
+
+  return winningSeat; // fallback to whoever made the final bid
 }
 
 /**
@@ -176,7 +226,13 @@ export function generatePBN(state) {
   }
   
   if (state.played?.length) {
-    pbn += `[Play "${state.playStart || ''}"]\n`;
+    const seatOrder = ['N', 'E', 'S', 'W'];
+    let playStart = state.playStart;
+    if (!playStart && state.declarer) {
+      const idx = seatOrder.indexOf(state.declarer);
+      if (idx >= 0) playStart = seatOrder[(idx + 1) % 4];
+    }
+    pbn += `[Play "${playStart || ''}"]\n`;
     state.played.forEach(trick => {
       pbn += trick + '\n';
     });

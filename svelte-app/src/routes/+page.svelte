@@ -342,6 +342,8 @@
         auction: gs.auction,
         auctionStart: gs.auctionStart,
         contract: gs.contract,
+        declarer: gs.declarer,
+        playStart: gs.playStart,
         played: gs.played,
       });
       handContext.pbn = pbn;
@@ -358,7 +360,8 @@
     const pbn = generatePBN({
       dealer: SEAT_KEY[gs.dealer] || gs.dealer, vulnerability: gs.vulnerability,
       deal: gs.deal, auction: gs.auction, auctionStart: gs.auctionStart,
-      contract: gs.contract, played: gs.played,
+      contract: gs.contract, declarer: gs.declarer, playStart: gs.playStart,
+      played: gs.played,
     });
     navigator.clipboard.writeText(pbn)
       .then(() => { response = 'PBN copied to clipboard!'; })
@@ -385,7 +388,7 @@
   {#if history.length > 0}
     <button class="tab" class:active={tab === 'history'} onclick={() => tab = 'history'}>This Hand ({history.length})</button>
   {/if}
-  <button class="tab" class:active={tab === 'saved'} onclick={() => { tab = 'saved'; if (!savedHistory) loadSavedHistory(); }}>Explore Hand History</button>
+  <button class="tab" class:active={tab === 'saved'} onclick={() => { tab = 'saved'; if (!savedHistory) loadSavedHistory(); }}>View Past Hands</button>
 </div>
 
 <!-- PBN Tab -->
@@ -397,7 +400,7 @@
       After a hand: menu → <b>Current Game</b> → <b>Export Hand to PBN</b>. Paste below or load a .pbn file.
     </p>
     <div class="pbn-load-row">
-      <label class="btn secondary file-btn">
+      <label class="btn primary file-btn">
         Load PBN File
         <input type="file" accept=".pbn,.txt" style="display:none" onchange={handleLoadPBNFile} />
       </label>
@@ -448,7 +451,7 @@
 {#if tab === 'saved'}
   <section class="section">
     <div class="section-header" style="margin-bottom: 12px">
-      <h2 class="s-title">Explore Hand History</h2>
+      <h2 class="s-title">View Past Hands</h2>
       <div class="row">
         <button class="btn sm" onclick={loadSavedHistory}>Refresh</button>
       </div>
