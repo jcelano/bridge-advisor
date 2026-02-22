@@ -320,19 +320,21 @@ Consider:
 
 Recommend a specific card and explain the line of play.`,
 
-    analyze: `Give a complete post-mortem analysis of this hand.
+    analyze: `Review this hand from the perspective of the requesting player. Use a coaching tone — direct, constructive, and encouraging. Address the requesting player as "you" throughout.
 
 Structure your response as follows:
 
-**Bidding** — Was the auction reasonable given the system in use? What would expert bidding look like?
-**Opening Lead** — Was the lead correct? What was the best lead and why?
-**Declarer Play** — Was the right line chosen? Identify any errors or missed opportunities.
-**Defense** — Did the defenders find the best play throughout? Any missed shots?
+**Your Game** — Start here. In 2-3 sentences, give the requesting player a direct personal summary of how they played this hand. Were their key decisions sound? What was the moment that mattered most for them? Be honest but positive where warranted.
+
+**Bidding** — Was the auction well-judged given the system in use? What would expert bidding look like?
+**Opening Lead** — Was the lead well-chosen? What was the best lead and why?
+**Declarer Play** — Was the right line taken? Identify any errors or missed opportunities.
+**Defense** — Did the defenders find their best play throughout? Any missed shots?
 **Result** — What was the actual result vs. the double-dummy optimal result?
-**Lessons** — One or two key takeaways from this hand.
+**Key Takeaways** — One or two things to remember from this hand going forward.
 
 **Grades**
-End your analysis with a "Grades" section using letter grades (A through F):
+End with a "Grades" section using letter grades (A through F):
 - Bidding (North-South): [grade] — one-sentence justification
 - Bidding (East-West): [grade] — one-sentence justification
 - Declarer Play: [grade] — one-sentence justification
