@@ -14,6 +14,7 @@
   import BidChip from '$lib/components/BidChip.svelte';
   import MarkdownResponse from '$lib/components/MarkdownResponse.svelte';
   import PlayRecord from '$lib/components/PlayRecord.svelte';
+  import AnalysisWithViewer from '$lib/components/AnalysisWithViewer.svelte';
 
   // ── State ─────────────────────────────────────────────
   let tab = $state('pbn');
@@ -542,22 +543,6 @@
                       <AuctionDisplay auction={entry.parsedPbn.auction} dealerSeat={SEAT_NAME[entry.parsedPbn.dealer] || 'South'} />
                     </div>
                   {/if}
-                  {#if entry.parsedPbn.played?.length}
-                    <div style="margin-top: 10px">
-                      <button class="btn sm play-toggle-btn"
-                        onclick={() => showPlay = { ...showPlay, [entry.id]: !showPlay[entry.id] }}>
-                        {showPlay[entry.id] ? '▾ Hide Play Record' : '▸ Show Play Record'}
-                      </button>
-                      {#if showPlay[entry.id]}
-                        <PlayRecord
-                          played={entry.parsedPbn.played}
-                          playStart={entry.parsedPbn.playStart}
-                          contract={entry.contract}
-                          declarer={entry.parsedPbn.declarer}
-                        />
-                      {/if}
-                    </div>
-                  {/if}
                 </div>
               {/if}
               <div class="saved-meta">
@@ -569,7 +554,32 @@
                 {#if entry.declarer}<span>Declarer: {entry.declarer}</span>{/if}
                 {#if entry.model}<span>Model: {entry.model}</span>{/if}
               </div>
-              <MarkdownResponse text={entry.response} />
+              {#if entry.parsedPbn?.played?.length && entry.parsedPbn?.deal && entry.adviceType === 'analyze'}
+                <AnalysisWithViewer
+                  text={entry.response}
+                  deal={entry.parsedPbn.deal}
+                  played={entry.parsedPbn.played}
+                  playStart={entry.parsedPbn.playStart}
+                  contract={entry.contract}
+                  declarer={entry.parsedPbn.declarer}
+                />
+                <div style="margin-top: 8px">
+                  <button class="btn sm play-toggle-btn"
+                    onclick={() => showPlay = { ...showPlay, [entry.id]: !showPlay[entry.id] }}>
+                    {showPlay[entry.id] ? '▾ Hide Trick Table' : '▸ Show Trick Table'}
+                  </button>
+                  {#if showPlay[entry.id]}
+                    <PlayRecord
+                      played={entry.parsedPbn.played}
+                      playStart={entry.parsedPbn.playStart}
+                      contract={entry.contract}
+                      declarer={entry.parsedPbn.declarer}
+                    />
+                  {/if}
+                </div>
+              {:else}
+                <MarkdownResponse text={entry.response} />
+              {/if}
             </div>
           {/if}
         </div>
@@ -712,7 +722,7 @@
     {#if currentState?.played?.length}
       <div style="margin-top: 10px">
         <button class="btn sm play-toggle-btn" onclick={() => showCurrentPlay = !showCurrentPlay}>
-          {showCurrentPlay ? '▾ Hide Play Record' : '▸ Show Play Record'}
+          {showCurrentPlay ? '▾ Hide Trick Table' : '▸ Show Trick Table'}
         </button>
         {#if showCurrentPlay}
           <PlayRecord
@@ -761,6 +771,15 @@
     <div class="response-label">{loading ? 'Analyzing...' : "The Stayman Whisperer"}</div>
     {#if loading}
       <div class="loading-text"><span class="pulse">♠</span> Thinking through the hand...</div>
+    {:else if currentState?.played?.length && currentState?.deal && adviceType === 'analyze'}
+      <AnalysisWithViewer
+        text={response}
+        deal={currentState.deal}
+        played={currentState.played}
+        playStart={currentState.playStart}
+        contract={currentState.contract}
+        declarer={currentState.declarer}
+      />
     {:else}
       <MarkdownResponse text={response} />
     {/if}

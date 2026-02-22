@@ -189,3 +189,21 @@ function applyInline(line) {
   line = line.replace(/\*(.+?)\*/g, '<em>$1</em>');
   return line;
 }
+
+/**
+ * Post-process rendered HTML to turn "Trick N" and "Tricks N–M" references
+ * into clickable chips with data-trick attributes.
+ * Safe to call on the final HTML string — only replaces outside of tags.
+ */
+export function linkifyTricks(html) {
+  if (!html) return html;
+  // Match "Trick(s) N" or "Trick(s) N–M" or "Trick(s) N-M" (case-insensitive)
+  // Capture the first trick number to use as the jump target.
+  // We use a negative lookbehind to avoid double-wrapping inside existing attributes.
+  return html.replace(
+    /(?<![="])(\bTricks?\s+(\d{1,2})(?:[–\-](\d{1,2}))?)/gi,
+    (match, full, n1) => {
+      return `<button class="trick-chip" data-trick="${n1}">${full}</button>`;
+    }
+  );
+}

@@ -8,6 +8,7 @@
   import AuctionDisplay from '$lib/components/AuctionDisplay.svelte';
   import MarkdownResponse from '$lib/components/MarkdownResponse.svelte';
   import PlayRecord from '$lib/components/PlayRecord.svelte';
+  import AnalysisWithViewer from '$lib/components/AnalysisWithViewer.svelte';
 
   let entry = $state(null);
   let loading = $state(true);
@@ -90,27 +91,34 @@
           </div>
         {/if}
 
-        <!-- Play Record -->
-        {#if entry.parsedPbn?.played?.length}
-          <div class="share-play">
-            <button class="play-toggle" onclick={() => showPlay = !showPlay}>
-              {showPlay ? '▾ Hide Play Record' : '▸ Show Play Record'}
-            </button>
-            {#if showPlay}
-              <PlayRecord
-                played={entry.parsedPbn.played}
-                playStart={entry.parsedPbn.playStart}
-                contract={entry.contract}
-                declarer={entry.parsedPbn.declarer}
-              />
-            {/if}
-          </div>
-        {/if}
-
-        <!-- Analysis -->
+        <!-- Analysis + Trick Viewer (split layout when play data exists) -->
         <div class="share-analysis">
           <div class="section-label">AI Analysis</div>
-          <MarkdownResponse text={entry.response} />
+          {#if entry.parsedPbn?.played?.length && entry.parsedPbn?.deal && entry.adviceType === 'analyze'}
+            <AnalysisWithViewer
+              text={entry.response}
+              deal={entry.parsedPbn.deal}
+              played={entry.parsedPbn.played}
+              playStart={entry.parsedPbn.playStart}
+              contract={entry.contract}
+              declarer={entry.parsedPbn.declarer}
+            />
+            <div style="margin-top: 8px">
+              <button class="play-toggle" onclick={() => showPlay = !showPlay}>
+                {showPlay ? '▾ Hide Trick Table' : '▸ Show Trick Table'}
+              </button>
+              {#if showPlay}
+                <PlayRecord
+                  played={entry.parsedPbn.played}
+                  playStart={entry.parsedPbn.playStart}
+                  contract={entry.contract}
+                  declarer={entry.parsedPbn.declarer}
+                />
+              {/if}
+            </div>
+          {:else}
+            <MarkdownResponse text={entry.response} />
+          {/if}
         </div>
 
         <!-- CTA -->
@@ -221,10 +229,6 @@
     border-bottom: 1px solid #1a2a1a;
   }
 
-  .share-play {
-    padding: 10px 18px 14px;
-    border-bottom: 1px solid #1a2a1a;
-  }
   .play-toggle {
     background: #0d1820; border: 1px solid #1a2a3a; color: #6a8aaa;
     padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;
