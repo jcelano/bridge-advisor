@@ -7,10 +7,12 @@
   import HandDisplay from '$lib/components/HandDisplay.svelte';
   import AuctionDisplay from '$lib/components/AuctionDisplay.svelte';
   import MarkdownResponse from '$lib/components/MarkdownResponse.svelte';
+  import PlayRecord from '$lib/components/PlayRecord.svelte';
 
   let entry = $state(null);
   let loading = $state(true);
   let notFound = $state(false);
+  let showPlay = $state(false);
 
   function safeParsePbn(pbn) {
     try { return pbn ? parsePBN(pbn) : null; } catch { return null; }
@@ -85,6 +87,23 @@
               auction={entry.parsedPbn.auction}
               dealerSeat={SEAT_NAME[entry.parsedPbn.dealer] || entry.dealer || 'South'}
             />
+          </div>
+        {/if}
+
+        <!-- Play Record -->
+        {#if entry.parsedPbn?.played?.length}
+          <div class="share-play">
+            <button class="play-toggle" onclick={() => showPlay = !showPlay}>
+              {showPlay ? '▾ Hide Play Record' : '▸ Show Play Record'}
+            </button>
+            {#if showPlay}
+              <PlayRecord
+                played={entry.parsedPbn.played}
+                playStart={entry.parsedPbn.playStart}
+                contract={entry.contract}
+                declarer={entry.parsedPbn.declarer}
+              />
+            {/if}
           </div>
         {/if}
 
@@ -201,6 +220,17 @@
     padding: 14px 18px;
     border-bottom: 1px solid #1a2a1a;
   }
+
+  .share-play {
+    padding: 10px 18px 14px;
+    border-bottom: 1px solid #1a2a1a;
+  }
+  .play-toggle {
+    background: #0d1820; border: 1px solid #1a2a3a; color: #6a8aaa;
+    padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;
+    font-family: monospace; margin-bottom: 6px;
+  }
+  .play-toggle:hover { background: #112030; color: #8aaac8; }
 
   .share-analysis {
     padding: 16px 18px;

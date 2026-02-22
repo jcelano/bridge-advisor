@@ -83,10 +83,9 @@ export function buildPrompt(gameState, adviceType, mySeat) {
     const colWidth = 10;
     const headerLine = rotated.map(s => seatFullName[s].padEnd(colWidth)).join('');
     sections.push(headerLine);
-    // Pad the first row so bids align under the correct seat column
-    const padBids = new Array(dealerIdx).fill('').concat(gameState.auction);
-    for (let i = 0; i < padBids.length; i += 4) {
-      const row = padBids.slice(i, i + 4).map(b => (b || '').padEnd(colWidth)).join('');
+    // Header is already rotated to start with dealer, so bids fill left-to-right from column 0
+    for (let i = 0; i < gameState.auction.length; i += 4) {
+      const row = gameState.auction.slice(i, i + 4).map(b => (b || '').padEnd(colWidth)).join('');
       if (row.trim()) sections.push(row);
     }
     sections.push('');
@@ -109,12 +108,17 @@ export function buildPrompt(gameState, adviceType, mySeat) {
 
     const analysis = analyzeTricks(gameState.played, trumpSuit, declarer, playStartSeat);
 
-    sections.push('--- PLAY RECORD ---');
+    sections.push('--- PLAY RECORD (columns fixed: North  East  South  West) ---');
+    sections.push('  Note: each row shows one trick; the leader for each trick is marked with *');
     analysis.tricks.forEach((trick, i) => {
       const cardDesc = trick.seatCards
-        ? trick.seatCards.map(sc => `${SEAT_NAME[sc.seat] || sc.seat}:${sc.raw}`).join('  ')
+        ? trick.seatCards.map(sc => {
+            const name = SEAT_NAME[sc.seat] || sc.seat;
+            const led = sc.seat === trick.leader ? '*' : ' ';
+            return `${led}${name}:${sc.raw}`;
+          }).join('  ')
         : trick.cards.join('  ');
-      const wonBy = trick.winner ? ` → won by ${SEAT_NAME[trick.winner] || trick.winner}` : '';
+      const wonBy = trick.winner ? ` → ${SEAT_NAME[trick.winner] || trick.winner} wins` : '';
       sections.push(`  Trick ${i + 1}: ${cardDesc}${wonBy}`);
     });
     sections.push('');
@@ -189,11 +193,11 @@ function extractTricksNeeded(contract) {
  * Card format: suit letter + rank, e.g., "C3 CK C4 C8"
  * The Play tag specifies the opening leader.
  *
- * Analyze who won each trick and count declarer tricks.
+ * PBN STANDARD: column 0 is always the trick leader; columns 1/2/3 continue
+ * clockwise (N→E→S→W→N). The leader rotates each trick to whoever won last.
+ * So token[i] belongs to seatOrder[(leaderIdx + i) % 4].
  */
 function analyzeTricks(playLines, trumpSuit, declarer, playStartSeat) {
-  // PBN play lines: the first card in each trick is led by the leader
-  // Column order is always N E S W (PBN standard)
   const seatOrder = ['N', 'E', 'S', 'W'];
   const tricks = [];
   let declarerTricks = 0;
@@ -205,44 +209,38 @@ function analyzeTricks(playLines, trumpSuit, declarer, playStartSeat) {
     return seat === 'E' || seat === 'W';
   };
 
-  // Rank ordering for comparison
   const rankOrder = '23456789TJQKA';
   const rankValue = (r) => rankOrder.indexOf(r.toUpperCase());
 
-  let leader = (playStartSeat || 'N').toUpperCase();
-  if (!seatOrder.includes(leader)) leader = 'N';
+  const firstLeader = (playStartSeat || 'N').toUpperCase();
+  const validFirstLeader = seatOrder.includes(firstLeader) ? firstLeader : 'N';
+  // Column order is fixed for the entire hand based on who leads trick 1.
+  // [Play "W"] means columns are W, N, E, S for every trick line.
+  const firstLeaderIdx = seatOrder.indexOf(validFirstLeader);
+  const columnSeats = [0, 1, 2, 3].map(i => seatOrder[(firstLeaderIdx + i) % 4]);
+
+  let leader = validFirstLeader;
 
   for (const line of playLines) {
-    // Parse 4 cards from the line (format: "C3 CK C4 C8")
     const cardTokens = line.trim().replace(/\.$/, '').split(/\s+/);
     if (cardTokens.length < 4) continue;
 
-    const startIdx = seatOrder.indexOf(leader);
-    const trickOrder = [
-      seatOrder[startIdx],
-      seatOrder[(startIdx + 1) % 4],
-      seatOrder[(startIdx + 2) % 4],
-      seatOrder[(startIdx + 3) % 4],
-    ];
-
-    const cards = [];
-    for (let i = 0; i < 4; i++) {
-      const token = cardTokens[i];
+    // Columns are fixed for the whole hand — token[i] always belongs to columnSeats[i]
+    const cards = cardTokens.slice(0, 4).map((token, i) => {
+      const seat = columnSeats[i];
       if (!token || token === '-') {
-        cards.push({ seat: trickOrder[i], suit: null, rank: null, raw: '-' });
-      } else {
-        cards.push({
-          seat: trickOrder[i],
-          suit: token[0].toUpperCase(),
-          rank: token.slice(1).toUpperCase(),
-          raw: token,
-        });
+        return { seat, suit: null, rank: null, raw: '-' };
       }
-    }
+      return {
+        seat,
+        suit: token[0].toUpperCase(),
+        rank: token.slice(1).toUpperCase(),
+        raw: token,
+      };
+    });
 
-    // Determine the lead suit (first non-null card's suit)
-    const leadCard = cards.find(c => c.suit);
-    const leadSuit = leadCard ? leadCard.suit : null;
+    // Lead suit = the card in column 0 (the leader's card)
+    const leadSuit = cards[0].suit;
 
     // Determine winner
     let winner = null;
@@ -255,31 +253,24 @@ function analyzeTricks(playLines, trumpSuit, declarer, playStartSeat) {
       const rv = rankValue(card.rank);
 
       if (isTrump && !bestIsTrump) {
-        // Trump beats non-trump
-        winner = card.seat;
-        bestRank = rv;
-        bestIsTrump = true;
+        winner = card.seat; bestRank = rv; bestIsTrump = true;
       } else if (isTrump && bestIsTrump && rv > bestRank) {
-        // Higher trump
-        winner = card.seat;
-        bestRank = rv;
+        winner = card.seat; bestRank = rv;
       } else if (!isTrump && !bestIsTrump && card.suit === leadSuit && rv > bestRank) {
-        // Higher card in lead suit (no trump played yet)
-        winner = card.seat;
-        bestRank = rv;
+        winner = card.seat; bestRank = rv;
       }
-      // Off-suit non-trump: doesn't win
     }
 
-    if (winner && isDeclarerSide(winner)) {
-      declarerTricks++;
-    } else if (winner) {
-      defenseTricks++;
-    }
+    if (winner && isDeclarerSide(winner)) declarerTricks++;
+    else if (winner) defenseTricks++;
+
+    // Re-sort cards into fixed N/E/S/W order for display in the prompt
+    const seatCards = [...cards].sort((a, b) => seatOrder.indexOf(a.seat) - seatOrder.indexOf(b.seat));
 
     tricks.push({
-      cards: cards.map(c => c.raw),
-      seatCards: cards.map(c => ({ seat: c.seat, raw: c.raw })),
+      leader,
+      cards: seatCards.map(c => c.raw),
+      seatCards: seatCards.map(c => ({ seat: c.seat, raw: c.raw })),
       winner,
       leadSuit,
     });

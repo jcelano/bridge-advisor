@@ -13,6 +13,7 @@
   import AuctionDisplay from '$lib/components/AuctionDisplay.svelte';
   import BidChip from '$lib/components/BidChip.svelte';
   import MarkdownResponse from '$lib/components/MarkdownResponse.svelte';
+  import PlayRecord from '$lib/components/PlayRecord.svelte';
 
   // ── State ─────────────────────────────────────────────
   let tab = $state('pbn');
@@ -56,6 +57,8 @@
   let savedExpanded = $state(null);
   let shareStatus = $state({});   // { [entryId]: 'copying' | 'copied' | 'error' | 'revoking' | 'revoked' }
   let sharedTokens = $state({});  // { [entryId]: token } — tracks which entries have an active share link
+  let showPlay = $state({});      // { [entryId]: boolean } — play record open in history entries
+  let showCurrentPlay = $state(false); // play record open in current hand panel
 
   async function handleShare(entryId) {
     shareStatus = { ...shareStatus, [entryId]: 'copying' };
@@ -85,6 +88,20 @@
       shareStatus = { ...shareStatus, [entryId]: 'error' };
       setTimeout(() => { shareStatus = { ...shareStatus, [entryId]: null }; }, 2500);
     }
+  }
+
+  function downloadPBN(entry) {
+    const pbn = entry.pbn || entry.parsedPbn && generatePBN(entry.parsedPbn);
+    if (!pbn) return;
+    const blob = new Blob([pbn], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const date = new Date(entry.timestamp).toISOString().slice(0, 10);
+    const contract = entry.contract ? `-${entry.contract}` : '';
+    a.href = url;
+    a.download = `hand-${date}${contract}.pbn`;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   function seedSharedTokens(entries) {
@@ -126,9 +143,14 @@
   });
 
   // ── PBN Import ────────────────────────────────────────
-  function handleParsePBN(text) {
+  function handleParsePBN(text, { scrollToAdvice = false } = {}) {
+    const src = text ?? pbnText;
+    if (!src?.trim()) {
+      response = 'Paste a PBN hand above, or use "Load PBN File" to import from a file.';
+      return;
+    }
     try {
-      const p = parsePBN(text ?? pbnText);
+      const p = parsePBN(src);
       parsedPBNData = p;
       northHand = emptyHand(); eastHand = emptyHand(); southHand = emptyHand(); westHand = emptyHand();
       if (p.dealer) dealer = SEAT_NAME[p.dealer] || 'South';
@@ -146,6 +168,12 @@
       }
       if (p.played?.length) tricks = p.played.join('\n');
       response = 'PBN imported successfully. Review the state below and ask for advice.';
+      if (scrollToAdvice) {
+        // Let Svelte flush the DOM update, then scroll the advice section into view
+        setTimeout(() => {
+          document.getElementById('advice-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 50);
+      }
     } catch (e) { response = 'Error parsing PBN: ' + e.message; }
   }
 
@@ -155,7 +183,7 @@
     const reader = new FileReader();
     reader.onload = (ev) => {
       pbnText = ev.target.result;
-      handleParsePBN(ev.target.result);
+      handleParsePBN(ev.target.result, { scrollToAdvice: true });
     };
     reader.readAsText(file);
     e.target.value = '';
@@ -486,6 +514,13 @@
                 {:else}🔗 Share{/if}
               </button>
             {/if}
+            {#if entry.pbn}
+              <button
+                class="share-btn download-btn"
+                onclick={(e) => { e.stopPropagation(); downloadPBN(entry); }}
+                title="Download PBN file"
+              >⬇ PBN</button>
+            {/if}
           </div>
 
           {#if savedExpanded === entry.id}
@@ -502,6 +537,22 @@
                     <div style="margin-top: 10px">
                       <div class="mini-label">Auction:</div>
                       <AuctionDisplay auction={entry.parsedPbn.auction} dealerSeat={SEAT_NAME[entry.parsedPbn.dealer] || 'South'} />
+                    </div>
+                  {/if}
+                  {#if entry.parsedPbn.played?.length}
+                    <div style="margin-top: 10px">
+                      <button class="btn sm play-toggle-btn"
+                        onclick={() => showPlay = { ...showPlay, [entry.id]: !showPlay[entry.id] }}>
+                        {showPlay[entry.id] ? '▾ Hide Play Record' : '▸ Show Play Record'}
+                      </button>
+                      {#if showPlay[entry.id]}
+                        <PlayRecord
+                          played={entry.parsedPbn.played}
+                          playStart={entry.parsedPbn.playStart}
+                          contract={entry.contract}
+                          declarer={entry.parsedPbn.declarer}
+                        />
+                      {/if}
                     </div>
                   {/if}
                 </div>
@@ -654,12 +705,28 @@
     {#if contract}
       <div class="contract-line" style="margin-top: 10px">Contract: <b>{contract}</b></div>
     {/if}
+
+    {#if currentState?.played?.length}
+      <div style="margin-top: 10px">
+        <button class="btn sm play-toggle-btn" onclick={() => showCurrentPlay = !showCurrentPlay}>
+          {showCurrentPlay ? '▾ Hide Play Record' : '▸ Show Play Record'}
+        </button>
+        {#if showCurrentPlay}
+          <PlayRecord
+            played={currentState.played}
+            playStart={currentState.playStart}
+            contract={currentState.contract}
+            declarer={currentState.declarer}
+          />
+        {/if}
+      </div>
+    {/if}
   </section>
 {/if}
 
 <!-- Advice Request -->
 {#if tab !== 'saved'}
-  <section class="section">
+  <section class="section" id="advice-section">
     <h2 class="s-title">Ask for Advice</h2>
     <div class="row" style="margin-bottom: 12px">
       {#each adviceTypes as [key, label]}
@@ -797,6 +864,8 @@
   .share-btn.unshare { background: #1a1010; border-color: #3a2020; color: #a87a6a; }
   .share-btn.unshare:hover { background: #251515; color: #c89a8a; }
   .share-btn.unshare.revoked { background: #0d1f0d; border-color: #1a3a1a; color: #8bdb6a; }
+  .share-btn.download-btn { background: #101a24; border-color: #1a2a3a; color: #6a8aaa; }
+  .share-btn.download-btn:hover { background: #152030; color: #8aaac8; }
   .saved-left { display: flex; align-items: center; gap: 8px; }
   .saved-type {
     display: inline-block; padding: 2px 8px; border-radius: 4px;
@@ -815,4 +884,6 @@
   .btn.danger { color: #e66; border-color: #3a1a1a; }
   .hand-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
   .saved-pbn { margin: 6px 0 10px; }
+  .play-toggle-btn { background: #0d1820; border-color: #1a2a3a; color: #6a8aaa; font-family: monospace; }
+  .play-toggle-btn:hover { background: #112030; color: #8aaac8; }
 </style>

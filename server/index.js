@@ -119,13 +119,16 @@ Rules for your response:
 - Be specific: name exact cards (e.g. "the jack of diamonds"), reference trick numbers, and cite probabilities where relevant.
 - Consider vulnerability and scoring implications.
 - Format with short paragraphs and markdown headers. Never write walls of text.
-- When a "Grades" section is requested, always include it at the end with letter grades A–F.`,
+- When a "Grades" section is requested, always include it at the end with letter grades A–F.
+- Write with authority and confidence. Never second-guess yourself, re-read the data, or show uncertainty about what the cards or play record say. Statements like "wait —", "let me re-read", "actually, re-examining", or "I mis-stated" are forbidden. Parse the data silently, then state your conclusions directly.`,
       messages: [{ role: 'user', content: prompt }],
     });
 
     const text = message.content
       .map((block) => (block.type === 'text' ? block.text : ''))
-      .join('\n');
+      .join('\n')
+      .replace(/[\n\r]+#{1,6}\s*$/m, '')  // strip trailing stray heading (e.g. "##" at end)
+      .trimEnd();
 
     console.log(`♠ Response: ${text.slice(0, 80)}...`);
 
