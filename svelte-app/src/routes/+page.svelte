@@ -138,9 +138,19 @@
     ['analyze', 'Full Analysis'],
   ];
 
-  // ── Health check ──────────────────────────────────────
+  // ── Health check + Chrome extension ?pbn= param ───────
   onMount(async () => {
     serverOk = await healthCheck();
+
+    // When the Bridge Advisor Chrome extension sends a hand it opens
+    // this page with ?pbn=<encoded PBN>.  Auto-import and clean the URL.
+    const pbnParam = new URLSearchParams(window.location.search).get('pbn');
+    if (pbnParam) {
+      tab = 'pbn';
+      pbnText = pbnParam;
+      handleParsePBN(pbnParam, { scrollToAdvice: true });
+      window.history.replaceState({}, '', window.location.pathname);
+    }
   });
 
   // ── PBN Import ────────────────────────────────────────
@@ -416,7 +426,7 @@
           {#each SEATS as s}<option value={s}>{s}</option>{/each}
         </select>
       </label>
-      <button class="btn primary" onclick={handleParsePBN}>Import PBN</button>
+      <button class="btn primary" onclick={() => handleParsePBN()}>Import PBN</button>
     </div>
   </section>
 {/if}

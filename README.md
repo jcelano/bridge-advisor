@@ -197,7 +197,7 @@ Just run `npm run svelte` on your laptop when you play. Simplest, most secure, n
 ## Features
 
 - **Manual Input**: Click to select your cards, enter bids with a visual bidding box
-- **PBN Import**: Paste PBN exports directly from Trickster Cards
+- **PBN Import**: Paste PBN exports directly from Trickster Cards (or use the Chrome extension for one-click import)
 - **PBN Export**: Export your current hand state to PBN format
 - **Bidding Advice**: Get recommendations based on SAYC or 2/1 Game Forcing
 - **Opening Lead Advice**: Optimal lead selection with reasoning
@@ -209,7 +209,34 @@ Just run `npm run svelte` on your laptop when you play. Simplest, most secure, n
 
 ## Using with Trickster Cards
 
-### Importing a completed hand (PBN)
+### Chrome Extension (recommended — one-click import)
+
+The `chrome-extension/` folder contains a browser extension that automatically detects PBN exports from Trickster Cards and sends them straight to Bridge Advisor — no copy-paste required.
+
+**Setup (one time):**
+
+```bash
+# 1. Generate the icon files
+cd bridge-advisor/chrome-extension
+node create-icons.js
+
+# 2. Load into Chrome
+#    chrome://extensions → Developer mode ON → Load unpacked → select chrome-extension/
+
+# 3. Click the ♠ toolbar icon → enter your Bridge Advisor URL → Save
+#    (defaults to http://localhost:5174 for local dev)
+```
+
+**Using it:**
+
+1. Play a hand on Trickster Cards (with **"Review last deal"** enabled in game rules)
+2. In the post-hand review: menu → **Current Game** → **Export Hand to PBN**
+3. A floating button appears on the Trickster page — click **Open in Bridge Advisor →**
+4. Bridge Advisor opens with the hand already imported, ready to analyze
+
+The toolbar icon also shows the last captured hand and lets you re-open it or copy the raw PBN at any time.
+
+### Manual import (without the extension)
 
 1. In Trickster Cards, enable **"Review last deal"** in game rules
 2. Play your hand
@@ -245,12 +272,21 @@ bridge-advisor/
 │   │   │   └── +page.svelte     # Bridge advisor UI
 │   │   ├── lib/
 │   │   │   ├── bridge/           # Shared logic (constants, PBN, prompt)
+│   │   │   │   └── __tests__/    # Vitest unit tests (tricks, PBN parsing)
 │   │   │   ├── components/       # Svelte 5 components (runes)
 │   │   │   └── api.js            # API client with auth
 │   │   ├── app.html
 │   │   └── app.css
 │   ├── svelte.config.js         # adapter-static → dist-svelte/
-│   └── vite.config.js
+│   ├── vite.config.js
+│   └── vitest.config.js         # test runner ($lib alias, node env)
+├── chrome-extension/         # Browser extension for one-click PBN import
+│   ├── manifest.json            # Manifest V3 config
+│   ├── content.js               # Runs on trickstercards.com, detects PBN
+│   ├── background.js            # Service worker, manages toolbar badge
+│   ├── popup.html / popup.js    # Toolbar icon UI
+│   ├── create-icons.js          # Run once to generate PNG icons
+│   └── icons/                   # icon16/48/128.png
 ├── render.yaml               # Render deployment blueprint
 ├── vercel.json               # Vercel deployment config
 ├── .env.example
@@ -269,6 +305,8 @@ bridge-advisor/
 | `npm run users:list` | List all users |
 | `npm run users:remove` | Remove a user account |
 | `npm run db:init` | Create database tables (also runs on server start) |
+| `cd svelte-app && npm test` | Run unit tests (bridge logic) |
+| `cd svelte-app && npm run test:watch` | Run tests in watch mode |
 
 ## Configuration
 
@@ -283,6 +321,56 @@ bridge-advisor/
 | `CLAUDE_MODEL` | `claude-sonnet-4-20250514` | Claude model |
 | `PORT` | `3001` | Backend port |
 | `SERVE_DIR` | `dist-svelte` | Which build to serve in production |
+
+## Testing
+
+The bridge logic (trick analysis, PBN parsing) has a Vitest unit test suite in `svelte-app/`.
+
+### Run the tests
+
+```bash
+cd svelte-app
+
+# Run once (CI-style)
+npm test
+
+# Watch mode — re-runs on every file save
+npm run test:watch
+```
+
+### What's covered
+
+| Test file | What it tests |
+|-----------|---------------|
+| `tricks.test.js` | `extractTrumpSuit`, `extractTricksNeeded`, and `analyzeTricks` using two real Trickster PBN hands — guards the lead-suit-rotation bug and rank-comparison bug |
+| `tricks-extended.test.js` | Four more real hands covering every `[Play "X"]` column start (W/E/S/N), every declarer seat (N/E/S/W), every trump strain (♠♥♦♣ NT), and both made and set outcomes |
+| `pbn.test.js` | `parsePBN` — dealer, vulnerability, contract, declarer, deal assignment for N-start and E-start hands, auction parsing, play line parsing |
+
+The two regressions the tests guard against:
+
+1. **Lead-suit taken from column 0** — In PBN, columns are fixed for the whole hand based on who leads trick 1 (`[Play "W"]` → columns always W/N/E/S). After trick 1 the *leader* rotates to whoever won last, but columns don't. Using `cards[0].suit` as the lead suit was wrong from trick 2 onward; the fix uses `cards.find(c => c.seat === leader)?.suit`.
+
+2. **Rank order for winner comparison** — Display sort uses `AKQJT98765432` (A = index 0); the winner comparison needs `23456789TJQKA` (A = index 12). Using the display order made 2s beat aces.
+
+### Adding a new test hand
+
+1. Export a PBN from Trickster Cards
+2. Run the hand through the analysis script to get expected trick counts:
+   ```bash
+   cd svelte-app
+   node --input-type=module <<'EOF'
+   import { parsePBN } from './src/lib/bridge/pbn.js';
+   import { analyzeTricks, extractTrumpSuit } from './src/lib/bridge/prompt.js';
+   import { readFileSync } from 'fs';
+   const s = parsePBN(readFileSync('/path/to/hand.pbn', 'utf8'));
+   const r = analyzeTricks(s.played, extractTrumpSuit(s.contract), s.declarer, s.playStart);
+   console.log(`dec=${r.declarerTricks} def=${r.defenseTricks}`);
+   r.tricks.forEach((t, i) =>
+     console.log(`T${i+1}: leader=${t.leader} suit=${t.leadSuit} winner=${t.winner}`)
+   );
+   EOF
+   ```
+3. Add a new `describe` block to `tricks-extended.test.js` following the existing pattern — inline the play lines as an array, call `analyzeTricks`, and assert the totals and a couple of specific trick winners
 
 ## API Costs
 
