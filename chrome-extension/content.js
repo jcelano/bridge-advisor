@@ -20,6 +20,13 @@
 (function () {
   'use strict';
 
+  // ── Inject main-world.js into the page's JS context ──────────────────────
+  // Content scripts run in an isolated world; Trickster's globals (like
+  // ExportHandToPTN) live in the main world.  We ask the background service
+  // worker to inject main-world.js via chrome.scripting (which bypasses CSP).
+  // .catch() suppresses "no listener" rejections when the service worker is idle.
+  chrome.runtime.sendMessage({ type: 'INJECT_MAIN_WORLD' }).catch(() => {});
+
   // ── State ─────────────────────────────────────────────────────────────────
 
   let lastPBN          = null;
@@ -35,28 +42,40 @@
   }
 
   /**
-   * Finds the first *visible* element whose textContent contains `text`.
+   * Finds the *deepest* visible element whose textContent contains `text`.
+   * Iterates in reverse DOM order so the most-specific child is returned
+   * rather than broad containers like <html> or <body>.
    * Uses getComputedStyle so position:fixed elements (e.g. Trickster menus)
    * are not wrongly excluded (offsetParent is null for fixed elements).
    */
   function findByText(text) {
     const lc = text.toLowerCase();
-    return [...document.querySelectorAll('*')].find(el => {
+    const matches = [...document.querySelectorAll('*')].filter(el => {
       if (!el.textContent.toLowerCase().includes(lc)) return false;
       const s = getComputedStyle(el);
       return s.display !== 'none' && s.visibility !== 'hidden';
-    }) || null;
+    });
+    // Return deepest match whose own text is short (avoids <html>/<body>)
+    for (let i = matches.length - 1; i >= 0; i--) {
+      if (matches[i].textContent.trim().length < 200) return matches[i];
+    }
+    return matches[matches.length - 1] || null;
   }
 
   /**
    * Like findByText but ignores CSS visibility — finds elements even when
    * hidden (e.g. a submenu that is in the DOM but not yet shown).
+   * Returns the deepest (most-specific) match.
    */
   function findByTextHidden(text) {
     const lc = text.toLowerCase();
-    return [...document.querySelectorAll('*')].find(el =>
+    const matches = [...document.querySelectorAll('*')].filter(el =>
       el.textContent.toLowerCase().includes(lc)
-    ) || null;
+    );
+    for (let i = matches.length - 1; i >= 0; i--) {
+      if (matches[i].textContent.trim().length < 200) return matches[i];
+    }
+    return matches[matches.length - 1] || null;
   }
 
   /**
@@ -76,13 +95,27 @@
     if (!pbn || pbn === lastPBN) return;
     lastPBN = pbn;
 
-    chrome.storage.local.set({ lastPBN: pbn, capturedAt: Date.now() });
-    chrome.runtime.sendMessage({ type: 'PBN_CAPTURED' });
+    // Guard: chrome.storage can be undefined if the extension was reloaded
+    // while this content script was still running (context invalidated).
+    try { chrome.storage?.local?.set({ lastPBN: pbn, capturedAt: Date.now() }); } catch (_) {}
+    try { chrome.runtime.sendMessage({ type: 'PBN_CAPTURED' }).catch(() => {}); } catch (_) {}
     showFloatingButton(pbn);
 
     // Allow hand-end prompt to fire again for the next hand
     setTimeout(() => { handEndPromptShown = false; }, 10_000);
   }
+
+  // ── Strategy F: Listen for PBN from main-world.js via postMessage ────────
+  // main-world.js intercepts URL.createObjectURL in the page's JS context and
+  // posts the blob text back here.  This catches downloads that never touch the
+  // DOM (Trickster creates the <a> link, calls .click() without appending it).
+  window.addEventListener('message', (e) => {
+    if (e.source !== window) return;
+    if (e.data?.type === '__BA_PBN__' && e.data.pbn) {
+      console.log('[BA] Received PBN from main world via postMessage');
+      onPBNDetected(e.data.pbn);
+    }
+  });
 
   // ── Strategy A: Intercept fetch() ────────────────────────────────────────
 
@@ -118,10 +151,10 @@
     return _xhrSend.apply(this, args);
   };
 
-  // ── Strategy C: Intercept WebSocket messages ─────────────────────────────
-  // Many real-time card games send PBN (or JSON containing PBN) over a
-  // WebSocket. This intercepts all messages so we can capture PBN without
-  // the user having to navigate any export menu.
+  // ── Strategy C: Intercept WebSocket / SignalR messages ───────────────────
+  // Trickster uses SignalR (which wraps WebSocket). We intercept two things:
+  //   1. The SignalR "handEnded" hub method → trigger hand-end prompt early
+  //   2. Any message containing raw PBN text → onPBNDetected (belt-and-suspenders)
 
   const _WS = window.WebSocket;
   window.WebSocket = class extends _WS {
@@ -131,16 +164,34 @@
         try {
           const raw = typeof evt.data === 'string' ? evt.data : null;
           if (!raw) return;
-          // Direct PBN string
+
+          // Direct PBN string (e.g. blob text)
           if (isPBN(raw)) { onPBNDetected(raw); return; }
-          // JSON payload — check common field paths
+
+          // JSON payload — parse once and check multiple things
           const obj = JSON.parse(raw);
+
+          // ── SignalR "handEnded" hub method (modern SignalR JSON protocol) ──
+          // Format: { "type": 1, "target": "handEnded", "arguments": [tricks, score] }
+          // Older SignalR format: { "M": [{ "M": "handEnded", ... }] }
+          const isHandEnded = obj?.target === 'handEnded' ||
+                              (Array.isArray(obj?.M) && obj.M.some(m => m?.M === 'handEnded'));
+          if (isHandEnded) {
+            console.log('[BA] SignalR handEnded detected');
+            if (!handEndPromptShown && Date.now() - lastHandEndAt >= 3000) {
+              lastHandEndAt      = Date.now();
+              handEndPromptShown = true;
+              // Wait ~7 s for Trickster's scorecard/reconnect sequence to finish,
+              // then show our prompt in the review-deal phase when export is available.
+              setTimeout(showHandEndPrompt, 7000);
+            }
+            return;
+          }
+
+          // ── PBN in JSON fields (unlikely but kept as extra coverage) ──
           const candidates = [
-            obj?.pbn,
-            obj?.hand?.pbn,
-            obj?.data?.pbn,
-            obj?.result?.pbn,
-            obj?.game?.pbn,
+            obj?.pbn, obj?.hand?.pbn, obj?.data?.pbn,
+            obj?.result?.pbn, obj?.game?.pbn,
             typeof obj?.data === 'string' ? obj.data : null,
           ];
           for (const c of candidates) {
@@ -184,39 +235,24 @@
       if (isPBN(text)) { onPBNDetected(text); return; }
     }
 
-    // ── (2) Hand-end detection ─────────────────────────────────────────────
+    // ── (2) Hand-end detection — using Trickster's actual DOM IDs ────────────
+    // Confirmed from Trickster's console output:
+    //   #scorecard         → shown immediately when a hand ends
+    //   #review-deal-message → shown during the review/export phase
     if (handEndPromptShown) return;
     if (Date.now() - lastHandEndAt < 3000) return;
 
-    // Signal A: Trickster's export menu item is now visible
-    const hasExportText = findByText('export hand to pbn') ||
-                          (findByText('export') && findByText('pbn'));
-
-    // Signal B: A short element containing a bridge score result appeared
-    // Only check in newly added nodes to avoid false positives from existing text
-    let hasResultText = false;
-    if (mutations) {
-      for (const m of mutations) {
-        for (const node of m.addedNodes) {
-          if (node.nodeType !== Node.ELEMENT_NODE) continue;
-          const walk = [node, ...node.querySelectorAll('*')];
-          for (const el of walk) {
-            if (el.childElementCount === 0 &&
-                el.offsetParent !== null &&
-                el.textContent.length < 80 &&
-                /(made|down|\+\d|-\d)/i.test(el.textContent)) {
-              hasResultText = true;
-              break;
-            }
-          }
-          if (hasResultText) break;
-        }
-        if (hasResultText) break;
-      }
+    function isVisible(el) {
+      if (!el) return false;
+      const s = getComputedStyle(el);
+      return s.display !== 'none' && s.visibility !== 'hidden';
     }
 
-    if (hasExportText || hasResultText) {
-      lastHandEndAt    = Date.now();
+    const hasScorecard  = isVisible(document.getElementById('scorecard'));
+    const hasReviewMsg  = isVisible(document.getElementById('review-deal-message'));
+
+    if (hasScorecard || hasReviewMsg) {
+      lastHandEndAt      = Date.now();
       handEndPromptShown = true;
       showHandEndPrompt();
     }
@@ -231,62 +267,140 @@
     });
   }
 
-  // ── Auto-export: programmatically trigger Trickster's export menu ────────
+  // ── Auto-export: trigger Trickster's PBN export ──────────────────────────
 
   /**
-   * Tries to auto-navigate Trickster's "Current Game → Export Hand to PBN"
-   * menu programmatically.
+   * Three-tier approach, most reliable first:
    *
-   * Improvements over the naive .click() approach:
-   *   • dispatchHover() fires mouseenter/mouseover/click so CSS :hover
-   *     dropdowns open correctly (plain .click() won't reveal them)
-   *   • Polls every 100 ms for up to 2 s instead of a single 350 ms guess
-   *   • Falls back to searching hidden elements in case the item is in the
-   *     DOM but not yet CSS-visible
+   *   Tier 1 — Call window.ExportHandToPTN() directly.
+   *            Confirmed from Trickster's own console: this is the function
+   *            that runs when the user clicks "Export Hand to PBN".
    *
-   * @param {Function} onFail  Called if the menu items can't be located.
+   *   Tier 2 — Click document.getElementById('export-hand').
+   *            Trickster's export button has id="export-hand".
+   *
+   *   Tier 3 — Fallback text-search + hover (kept as last resort).
+   *
+   * @param {Function} onFail  Called only if all three tiers fail.
    */
   function tryAutoExport(onFail) {
-    const menuEl = findByText('current game') || findByTextHidden('current game');
-    console.log('[BA] tryAutoExport — "current game" element:',
-      menuEl ? `${menuEl.tagName} "${menuEl.textContent.trim()}"` : 'NOT FOUND');
+    const pbnBefore = lastPBN;
 
-    if (!menuEl) {
-      console.log('[BA] FAIL: "current game" menu item not found in DOM');
-      onFail();
-      return;
-    }
+    // ── Tier 1: ask main-world.js to call ExportHandToPTN() ──────────────────
+    // main-world.js (injected at page start by the background service worker)
+    // runs in the page's JS context and has access to ExportHandToPTN.
+    // postMessage bridges isolated world ↔ main world safely.
+    console.log('[BA] Tier 1: postMessage __BA_EXPORT__ → main world');
+    window.postMessage({ type: '__BA_EXPORT__' }, '*');
 
-    // Open the submenu with a full hover sequence (handles CSS :hover dropdowns)
-    dispatchHover(menuEl);
+    // Wait 800 ms — if a new PBN was captured by any strategy, we're done.
+    setTimeout(() => {
+      if (lastPBN !== pbnBefore) { console.log('[BA] Tier 1 succeeded'); return; }
+      console.log('[BA] Tier 1 no result, trying Tier 2...');
 
-    // Poll for the export item to appear (up to 2 000 ms)
-    let attempts = 0;
-    const poll = setInterval(() => {
-      attempts++;
+      // ── Tier 2: force-show menu hierarchy then click export TRIGGER ────────
+      // #export-hand has TWO children:
+      //   1. <a> WITHOUT download attr  →  the export trigger; its click
+      //      listener calls ExportHandToPTN() (Trickster's closure function)
+      //   2. <a download>               →  the download link; initially empty
+      //                                    data:text/plain;charset=utf-8,
+      //                                    ExportHandToPTN populates it and
+      //                                    then calls .click() on it to download
+      //
+      // We MUST click #1 (the trigger), NOT #2 or the "Download" button.
+      // The old `querySelector('a, button, [onclick]')` was finding the
+      // "Download" BUTTON which called .click() on the still-empty download link.
+      const exportById = document.getElementById('export-hand');
+      if (exportById) {
+        console.log('[BA] Tier 2: force-showing #menu → #current-game → #export-hand');
+        ['menu', 'current-game', 'export-hand'].forEach(id => {
+          const el = document.getElementById(id);
+          if (el) {
+            el.style.setProperty('display', 'block', 'important');
+            el.style.setProperty('visibility', 'visible', 'important');
+            el.style.setProperty('opacity', '1', 'important');
+            el.style.setProperty('pointer-events', 'auto', 'important');
+          }
+        });
 
-      const exportEl =
-        findByText('export hand to pbn') ||
-        findByText('export hand')        ||
-        findByText('export to pbn')      ||
-        findByTextHidden('export hand to pbn') ||   // try even if CSS-hidden
-        findByTextHidden('export hand');
+        // Target the export trigger <a> (no download attr) — NOT the download button
+        const triggerLink = exportById.querySelector('a:not([download])');
+        const clickTarget  = triggerLink || exportById;
+        console.log('[BA] Tier 2 click target:', clickTarget.tagName,
+                    '| download=', clickTarget.getAttribute('download'),
+                    '|', clickTarget.textContent?.trim().substring(0, 40));
+        dispatchHover(clickTarget);
 
-      if (exportEl) {
-        clearInterval(poll);
-        console.log('[BA] Found export element:', `${exportEl.tagName} "${exportEl.textContent.trim()}"`);
-        dispatchHover(exportEl);
-      } else if (attempts >= 20) {   // 20 × 100 ms = 2 s
-        clearInterval(poll);
-        // Log all short visible text so the user can identify the real menu label
-        const visibleText = [...document.querySelectorAll('*')]
-          .filter(e => { const s = getComputedStyle(e); return s.display !== 'none' && s.visibility !== 'hidden'; })
-          .map(e => e.textContent.trim())
-          .filter(t => t.length > 1 && t.length < 60);
-        console.log('[BA] FAIL: export item not found after 2 s. Visible text on page:', visibleText);
-        onFail();
+        // Poll up to 1.5 s for a result.
+        // Happy path: ExportHandToPTN auto-calls downloadLink.click() in the
+        //   main world → main-world.js interceptor fires → lastPBN changes.
+        // Fallback: ExportHandToPTN only sets the href without auto-clicking →
+        //   we read the populated href directly from the DOM.
+        let tier2Poll = 0;
+        const tier2Timer = setInterval(() => {
+          tier2Poll++;
+
+          if (lastPBN !== pbnBefore) {
+            clearInterval(tier2Timer);
+            console.log('[BA] Tier 2 succeeded (interceptor caught it)');
+            return;
+          }
+
+          // Fallback: check if download link href was populated
+          const dlLink = exportById.querySelector('a[download]');
+          if (dlLink) {
+            const href  = dlLink.getAttribute('href') || '';
+            const comma = href.indexOf(',');
+            if (comma >= 0) {
+              const raw     = href.substring(comma + 1);
+              const decoded = (raw.includes('%5B') || raw.includes('%5b') || raw.includes('%5D'))
+                ? decodeURIComponent(raw) : raw;
+              if (decoded.length > 30 && decoded.includes('[Deal ')) {
+                clearInterval(tier2Timer);
+                console.log('[BA] Tier 2 succeeded (href fallback, len=' + decoded.length + ')');
+                onPBNDetected(decoded);
+                return;
+              }
+            }
+          }
+
+          if (tier2Poll >= 15) {
+            clearInterval(tier2Timer);
+            console.log('[BA] Tier 2 no result after 1.5 s, trying Tier 3...');
+            runTier3();
+          }
+        }, 100);
+        return;
       }
-    }, 100);
+
+      console.log('[BA] #export-hand not found in DOM, trying Tier 3...');
+      runTier3();
+    }, 800);
+
+    // ── Tier 3: text-search + hover fallback ──────────────────────────────────
+    function runTier3() {
+      const menuEl = findByText('current game') || findByTextHidden('current game');
+      console.log('[BA] Tier 3 text-search "current game":', menuEl?.tagName, menuEl?.textContent?.trim());
+      if (!menuEl) { console.log('[BA] FAIL: nothing found'); onFail(); return; }
+
+      dispatchHover(menuEl);
+      let attempts = 0;
+      const poll = setInterval(() => {
+        attempts++;
+        const exportEl =
+          findByText('export hand to pbn') || findByText('export hand') ||
+          findByTextHidden('export hand to pbn') || findByTextHidden('export hand');
+        if (exportEl) {
+          clearInterval(poll);
+          console.log('[BA] Tier 3 found export element:', exportEl.tagName, exportEl.textContent?.trim());
+          dispatchHover(exportEl);
+        } else if (attempts >= 20) {
+          clearInterval(poll);
+          console.log('[BA] FAIL: export item not found after 2 s');
+          onFail();
+        }
+      }, 100);
+    }
   }
 
   // ── Hand-end prompt ───────────────────────────────────────────────────────

@@ -1,8 +1,10 @@
 /**
  * Bridge Advisor Connector — Background Service Worker
  *
- * Listens for messages from the content script and updates the
- * extension badge so the user can see at a glance that a PBN was captured.
+ * Listens for messages from the content script and:
+ *   - Updates the extension badge when a PBN is captured
+ *   - Injects main-world.js into the page's JS context (bypasses CSP) so we
+ *     can intercept URL.createObjectURL and call ExportHandToPTN() directly
  */
 
 chrome.runtime.onMessage.addListener((message, sender) => {
@@ -11,6 +13,18 @@ chrome.runtime.onMessage.addListener((message, sender) => {
     chrome.action.setBadgeText({ text: '♠', tabId: sender.tab.id });
     chrome.action.setBadgeBackgroundColor({ color: '#2a6a2a', tabId: sender.tab.id });
     chrome.action.setBadgeTextColor({ color: '#c0e8c0', tabId: sender.tab.id });
+  }
+
+  // Content script asks us to inject main-world.js into the page's JS context.
+  // chrome.scripting.executeScript with world:'MAIN' bypasses the page's CSP
+  // (it's a browser-level injection, not a <script> tag) so we can access
+  // Trickster's window globals like ExportHandToPTN.
+  if (message.type === 'INJECT_MAIN_WORLD' && sender.tab?.id) {
+    chrome.scripting.executeScript({
+      target: { tabId: sender.tab.id },
+      world: 'MAIN',
+      files: ['main-world.js'],
+    }).catch(err => console.warn('[BA background] main-world inject failed:', err));
   }
 });
 
