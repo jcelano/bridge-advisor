@@ -82,7 +82,7 @@ export async function listUsers({ limit = 25, offset = 0, search = '' } = {}) {
      FROM users u
      LEFT JOIN daily_usage today ON today.user_email = u.email AND today.usage_date = CURRENT_DATE
      LEFT JOIN (
-       SELECT user_email, SUM(query_count) as total FROM daily_usage GROUP BY user_email
+       SELECT user_email, COUNT(*) as total FROM history GROUP BY user_email
      ) alltime ON alltime.user_email = u.email
      ${where}
      ORDER BY u.created_at DESC
