@@ -139,6 +139,41 @@ export function requireAdmin(req, res, next) {
   next();
 }
 
+// ── Password Reset ──────────────────────────────────────────────
+export async function generateResetToken(email) {
+  const user = await findUser(email);
+  if (!user) return null; // don't leak whether email exists
+
+  const rawToken = crypto.randomBytes(32).toString('hex');
+  // Store a hash of the token so DB compromise doesn't expose valid tokens
+  const hashedToken = crypto.createHash('sha256').update(rawToken).digest('hex');
+  const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+
+  await query(
+    `UPDATE users SET reset_token = $1, reset_token_expires = $2 WHERE LOWER(email) = LOWER($3)`,
+    [hashedToken, expiresAt.toISOString(), email]
+  );
+
+  return rawToken;
+}
+
+export async function verifyResetToken(rawToken) {
+  if (!rawToken) return null;
+  const hashedToken = crypto.createHash('sha256').update(rawToken).digest('hex');
+  return getOne(
+    `SELECT email, name FROM users WHERE reset_token = $1 AND reset_token_expires > NOW()`,
+    [hashedToken]
+  );
+}
+
+export async function resetPassword(email, newPassword) {
+  const hashed = await hashPassword(newPassword);
+  await query(
+    `UPDATE users SET password = $1, reset_token = NULL, reset_token_expires = NULL WHERE LOWER(email) = LOWER($2)`,
+    [hashed, email]
+  );
+}
+
 // ── Login ─────────────────────────────────────────────────────
 export async function loginUser(email, password) {
   const user = await findUser(email);

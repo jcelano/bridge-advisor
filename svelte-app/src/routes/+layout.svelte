@@ -5,6 +5,8 @@
   import Login from '$lib/components/Login.svelte';
   import Signup from '$lib/components/Signup.svelte';
   import Landing from '$lib/components/Landing.svelte';
+  import ForgotPassword from '$lib/components/ForgotPassword.svelte';
+  import ResetPassword from '$lib/components/ResetPassword.svelte';
   import FeedbackModal from '$lib/components/FeedbackModal.svelte';
   import '../app.css';
   import pkg from '../../../package.json';
@@ -16,7 +18,8 @@
   let authRequired = $state(true);
   let user = $state(null);
   let usage = $state(null);
-  let authView = $state('landing'); // 'landing' | 'login' | 'signup'
+  let authView = $state('landing'); // 'landing' | 'login' | 'signup' | 'forgot' | 'reset'
+  let resetToken = $state(null);
   let turnstileSiteKey = $state(null);
   let showFeedback = $state(false);
 
@@ -25,6 +28,17 @@
 
   onMount(async () => {
     if (isSharePage) { authChecked = true; return; }
+
+    // Check for password reset token in URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const rt = urlParams.get('reset');
+    if (rt) {
+      resetToken = rt;
+      authView = 'reset';
+      // Clean the URL without reloading
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+
     const status = await getAuthStatus();
     authRequired = status.authEnabled;
     turnstileSiteKey = status.turnstileSiteKey || null;
@@ -56,10 +70,14 @@
 {:else if !authChecked}
   <div class="loading">Loading...</div>
 {:else if authRequired && !user}
-  {#if authView === 'signup'}
+  {#if authView === 'reset' && resetToken}
+    <ResetPassword token={resetToken} onback={() => { resetToken = null; authView = 'login'; }} {turnstileSiteKey} />
+  {:else if authView === 'forgot'}
+    <ForgotPassword onback={() => authView = 'login'} {turnstileSiteKey} />
+  {:else if authView === 'signup'}
     <Signup onlogin={handleLogin} onback={() => authView = 'login'} {turnstileSiteKey} />
   {:else if authView === 'login'}
-    <Login onlogin={handleLogin} onsignup={() => authView = 'signup'} {turnstileSiteKey} />
+    <Login onlogin={handleLogin} onsignup={() => authView = 'signup'} onforgot={() => authView = 'forgot'} {turnstileSiteKey} />
   {:else}
     <Landing onShowSignup={() => authView = 'signup'} onShowLogin={() => authView = 'login'} />
   {/if}

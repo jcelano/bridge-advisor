@@ -4,10 +4,12 @@ import Anthropic from '@anthropic-ai/sdk';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { Resend } from 'resend';
 import {
   requireAuth, requireAdmin, loginUser, verifyToken,
   createUser, findUser, redeemInviteCode, markInviteUsed,
   createInviteCode, listInviteCodes, approveUser, getPendingUsers, listUsers,
+  generateResetToken, verifyResetToken, resetPassword,
 } from './auth.js';
 import { addEntry, getEntries, getEntry, deleteEntry, clearHistory, createShareToken, revokeShareToken, getSharedEntry } from './history.js';
 import { initSchema, getOne, getAll, query as dbQuery } from './db.js';
@@ -74,6 +76,27 @@ async function verifyTurnstile(token) {
     return data.success === true;
   } catch (err) {
     log.error('turnstile', err.message);
+    return false;
+  }
+}
+
+// ── Email (Resend) ───────────────────────────────────────────
+const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
+const APP_URL = process.env.APP_URL || 'http://localhost:5174';
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || null;
+const EMAIL_FROM = process.env.EMAIL_FROM || 'The Stayman Whisperer <onboarding@resend.dev>';
+
+async function sendEmail(to, subject, html) {
+  if (!resend) {
+    log.warn('email', `Resend not configured. Would send to ${to}: ${subject}`);
+    return false;
+  }
+  try {
+    await resend.emails.send({ from: EMAIL_FROM, to, subject, html });
+    log.info('email', `Sent "${subject}" to ${to}`);
+    return true;
+  } catch (err) {
+    log.error('email', `Failed to send to ${to}: ${err.message}`);
     return false;
   }
 }
@@ -205,12 +228,99 @@ app.post('/api/auth/register', async (req, res) => {
     }
 
     log.info('auth', `Access request: ${user.name} (${user.email})`);
+
+    // Notify admin of new access request
+    if (ADMIN_EMAIL) {
+      sendEmail(ADMIN_EMAIL, `New access request — ${user.name}`, `
+        <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 24px; background: #0c1219; color: #c0d0e0; border-radius: 12px;">
+          <div style="text-align: center; margin-bottom: 20px;">
+            <span style="font-size: 36px; color: #d4af37;">♠</span>
+            <h2 style="color: #d4af37; margin: 8px 0 0;">New Access Request</h2>
+          </div>
+          <p><strong>${user.name}</strong> (${user.email}) has requested access to The Stayman Whisperer.</p>
+          <p style="text-align: center; margin: 24px 0;">
+            <a href="${APP_URL}" style="display: inline-block; padding: 12px 28px; background: linear-gradient(135deg, #d4af37, #a08520); color: #0a0a10; text-decoration: none; font-weight: 700; border-radius: 8px;">Review in Admin Dashboard</a>
+          </p>
+        </div>
+      `);
+    }
+
     res.json({ message: 'Account created. Your access request is pending approval.' });
   } catch (err) {
     if (err.message.includes('already exists')) {
       return res.status(409).json({ error: 'An account with this email already exists' });
     }
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Password Reset Routes (public) ────────────────────────────
+
+app.post('/api/auth/forgot-password', async (req, res) => {
+  try {
+    const { email, turnstileToken } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email is required' });
+
+    if (!await verifyTurnstile(turnstileToken)) {
+      return res.status(403).json({ error: 'Human verification failed. Please try again.' });
+    }
+
+    const rawToken = await generateResetToken(email);
+
+    // Always return success — don't leak whether email exists
+    if (rawToken) {
+      const resetUrl = `${APP_URL}?reset=${rawToken}`;
+      log.info('auth', `Password reset requested for ${email}`);
+      log.info('auth', `Reset link: ${resetUrl}`);
+
+      await sendEmail(email, 'Reset your password — The Stayman Whisperer', `
+        <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 24px; background: #0c1219; color: #c0d0e0; border-radius: 12px;">
+          <div style="text-align: center; margin-bottom: 20px;">
+            <span style="font-size: 36px; color: #d4af37;">♠</span>
+            <h2 style="color: #d4af37; margin: 8px 0 0;">The Stayman Whisperer</h2>
+          </div>
+          <p>You requested a password reset. Click the link below to set a new password:</p>
+          <p style="text-align: center; margin: 24px 0;">
+            <a href="${resetUrl}" style="display: inline-block; padding: 12px 28px; background: linear-gradient(135deg, #d4af37, #a08520); color: #0a0a10; text-decoration: none; font-weight: 700; border-radius: 8px;">Reset Password</a>
+          </p>
+          <p style="font-size: 12px; color: #6a8a6a;">This link expires in 15 minutes. If you didn't request this, you can safely ignore this email.</p>
+        </div>
+      `);
+    }
+
+    res.json({ message: 'If an account with that email exists, a reset link has been sent.' });
+  } catch (err) {
+    log.error('auth', `Forgot password error: ${err.message}`);
+    res.json({ message: 'If an account with that email exists, a reset link has been sent.' });
+  }
+});
+
+app.post('/api/auth/reset-password', async (req, res) => {
+  try {
+    const { token, password, turnstileToken } = req.body;
+    if (!token || !password) {
+      return res.status(400).json({ error: 'Token and new password are required' });
+    }
+    if (password.length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    }
+
+    if (!await verifyTurnstile(turnstileToken)) {
+      return res.status(403).json({ error: 'Human verification failed. Please try again.' });
+    }
+
+    const user = await verifyResetToken(token);
+    if (!user) {
+      return res.status(400).json({ error: 'Invalid or expired reset link. Please request a new one.' });
+    }
+
+    await resetPassword(user.email, password);
+    log.info('auth', `Password reset completed for ${user.email}`);
+
+    res.json({ message: 'Password has been reset. You can now sign in with your new password.' });
+  } catch (err) {
+    log.error('auth', `Reset password error: ${err.message}`);
+    res.status(500).json({ error: 'Failed to reset password. Please try again.' });
   }
 });
 

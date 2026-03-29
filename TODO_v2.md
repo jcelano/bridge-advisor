@@ -101,7 +101,40 @@ Your Anthropic API key, Supabase password, and old JWT secret were previously co
   - New `JWT_SECRET` (already generated in `.env`: `87bdede836...`)
   - New `ALLOWED_ORIGINS` (e.g., `https://your-app.onrender.com`)
 
-### 2. Set Your Account as Admin
+### 2. Set Up Cloudflare Turnstile (Bot Protection)
+
+- [ ] **Create a free Cloudflare account** at https://dash.cloudflare.com (if you don't have one)
+- [ ] **Create a Turnstile widget** at https://dash.cloudflare.com/?to=/:account/turnstile
+  - Add your production domain (e.g., `your-app.onrender.com`)
+  - Add `localhost` for local dev
+  - Widget type: "Managed" (recommended)
+- [ ] **Copy the Site Key and Secret Key** from the Turnstile dashboard
+- [ ] **Add to `.env`** (local dev):
+  - `TURNSTILE_SITE_KEY=0x4AAAAAAA...`
+  - `TURNSTILE_SECRET_KEY=0x4AAAAAAA...`
+- [ ] **Add to Render env vars** (production):
+  - `TURNSTILE_SITE_KEY` — same site key
+  - `TURNSTILE_SECRET_KEY` — same secret key
+
+> Without these, Turnstile is skipped and forms work without bot protection. Once set, the widget appears on Login, Signup, Feedback, and Password Reset forms.
+
+### 3. Set Up Resend (Email)
+
+- [ ] **Create a free Resend account** at https://resend.com (100 emails/day free)
+- [ ] **Get your API key** at https://resend.com/api-keys
+- [ ] **Add to `.env`** (local dev):
+  - `RESEND_API_KEY=re_xxxxxxxx`
+  - `APP_URL=http://localhost:5174`
+  - `ADMIN_EMAIL=your@email.com`
+- [ ] **Add to Render env vars** (production):
+  - `RESEND_API_KEY` — same API key
+  - `APP_URL=https://your-app.onrender.com`
+  - `ADMIN_EMAIL=your@email.com`
+- [ ] **Optional**: Verify a custom domain in Resend to send from your own address, then set `EMAIL_FROM=noreply@yourdomain.com`
+
+> Without `RESEND_API_KEY`, password reset links and admin notifications are logged to the server console instead of emailed. Everything still works — you just have to check the logs manually.
+
+### 5. Set Your Account as Admin
 
 After deploying and the schema migration runs, connect to your database and run:
 
@@ -113,7 +146,7 @@ You can do this via:
 - Supabase SQL Editor (Dashboard → SQL Editor)
 - Render Shell: `node server/manage-users.js` (doesn't support tier yet — use SQL directly)
 
-### 3. Test the Full Flow
+### 6. Test the Full Flow
 
 - [ ] Visit the site unauthenticated — verify landing page appears
 - [ ] Click "Get Started" — verify signup form with invite code toggle
@@ -124,18 +157,21 @@ You can do this via:
 - [ ] Register a new user with the invite code — verify auto-login
 - [ ] Make 10+ analyses as a free user — verify 429 rate limit
 - [ ] Check usage badge updates in header after each analysis
+- [ ] Click "Forgot password?" on login → enter email → check for email (or server console log)
+- [ ] Click reset link → set new password → verify login works with new password
+- [ ] Submit feedback via footer link → verify it appears in admin dashboard
+- [ ] Register without invite code → verify admin receives notification email (or console log)
 
-### 4. Chrome Extension
+### 7. Chrome Extension
 
 - [ ] Reload the extension in `chrome://extensions` (the code changed)
 - [ ] Update the Bridge Advisor URL in the popup to your production URL
 - [ ] Enable debug logging, play a hand on Trickster, check console for strategy logs
 - [ ] Verify PBN detection works after hand completion
 
-### 5. Optional Future Work
+### 8. Optional Future Work
 
 - [ ] Add email verification (currently skipped for MVP)
-- [ ] Add password reset flow
 - [ ] Add Stripe integration for Pro tier payments
 - [ ] Add terms of service / privacy policy pages
 - [ ] Publish Chrome extension to Chrome Web Store ($5 one-time fee)
@@ -144,6 +180,52 @@ You can do this via:
 - [ ] Add CSRF protection for state-changing endpoints
 
 ---
+
+## Phase 11: Password Reset via Email (Resend)
+- **`resend` package** installed — Resend SDK for transactional email (free: 100 emails/day)
+- **`sendEmail()` helper** in `server/index.js` — wraps Resend SDK, falls back to console.log if `RESEND_API_KEY` not set
+- **Schema**: added `reset_token` (TEXT UNIQUE) and `reset_token_expires` (TIMESTAMPTZ) columns to users table
+- **`generateResetToken(email)`** in `server/auth.js` — generates `crypto.randomBytes(32)`, stores SHA-256 hash in DB, returns raw token. 15-minute expiry.
+- **`verifyResetToken(token)`** — hashes the provided token, looks up matching unexpired row
+- **`resetPassword(email, newPassword)`** — hashes new password, clears reset token fields
+- **`POST /api/auth/forgot-password`** (public, Turnstile-protected) — generates token, sends branded HTML email with reset link. Always returns success (doesn't leak whether email exists).
+- **`POST /api/auth/reset-password`** (public, Turnstile-protected) — validates token, updates password, returns success
+- **`ForgotPassword.svelte`** — email input + Turnstile, shows "check your email" on success
+- **`ResetPassword.svelte`** — new password + confirm + Turnstile, reads token from `?reset=TOKEN` URL param
+- **Login.svelte** — added "Forgot password?" link below password field
+- **Layout routing** — `authView` now supports `'forgot'` and `'reset'` states; auto-detects `?reset=TOKEN` in URL on page load
+
+## Phase 12: Admin Email Notifications
+- **Access request emails** — when a user registers without an invite code, the admin receives an email notification with the user's name and a link to the admin dashboard
+- **`ADMIN_EMAIL` env var** — configures who receives notifications
+- Falls back to console.log if Resend not configured
+
+### Manual Steps
+- [ ] Create a Resend account at https://resend.com (free tier)
+- [ ] Get your API key from https://resend.com/api-keys
+- [ ] Add to `.env` and Render env vars:
+  - `RESEND_API_KEY=re_xxxxxxxx`
+  - `APP_URL=https://your-app.onrender.com`
+  - `ADMIN_EMAIL=your@email.com`
+- [ ] Optional: verify a custom domain in Resend to send from your own address (set `EMAIL_FROM`)
+
+### New Files
+```
+svelte-app/src/lib/components/ForgotPassword.svelte  — forgot password form
+svelte-app/src/lib/components/ResetPassword.svelte    — reset password form (from email link)
+```
+
+### Modified Files
+```
+server/auth.js          — generateResetToken, verifyResetToken, resetPassword functions
+server/index.js         — Resend integration, forgot-password/reset-password endpoints, admin notification
+server/db.js            — reset_token and reset_token_expires columns
+svelte-app/src/lib/api.js               — requestPasswordReset, confirmPasswordReset functions
+svelte-app/src/lib/components/Login.svelte — "Forgot password?" link + onforgot prop
+svelte-app/src/routes/+layout.svelte     — forgot/reset auth views, ?reset=TOKEN detection
+.env.example            — RESEND_API_KEY, APP_URL, ADMIN_EMAIL, EMAIL_FROM docs
+package.json            — resend dependency
+```
 
 ---
 

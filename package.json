@@ -6,21 +6,15 @@
   "type": "module",
   "scripts": {
     "install:all": "npm install && cd svelte-app && npm install",
-
     "dev:server": "node server/index.js",
     "dev:svelte": "cd svelte-app && npx vite dev --port 5174",
-
     "svelte": "concurrently \"npm run dev:server\" \"npm run dev:svelte\"",
-
     "build:svelte": "cd svelte-app && npx vite build",
-
     "start:svelte": "SERVE_DIR=dist-svelte NODE_ENV=production node server/index.js",
-
     "users": "node server/manage-users.js",
     "users:add": "node server/manage-users.js add",
     "users:list": "node server/manage-users.js list",
     "users:remove": "node server/manage-users.js remove",
-
     "db:init": "node server/db.js"
   },
   "dependencies": {
@@ -30,7 +24,8 @@
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "jsonwebtoken": "^9.0.2",
-    "pg": "^8.13.0"
+    "pg": "^8.13.0",
+    "resend": "^6.9.4"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

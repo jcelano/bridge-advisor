@@ -99,6 +99,29 @@ export async function register(email, password, name, inviteCode, turnstileToken
   return data;
 }
 
+// ── Password Reset API ───────────────────────────────────────
+export async function requestPasswordReset(email, turnstileToken) {
+  const res = await fetch(`${API_BASE}/auth/forgot-password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, turnstileToken }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Request failed');
+  return data;
+}
+
+export async function confirmPasswordReset(token, password, turnstileToken) {
+  const res = await fetch(`${API_BASE}/auth/reset-password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token, password, turnstileToken }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Reset failed');
+  return data;
+}
+
 // ── Usage API ────────────────────────────────────────────────
 export async function getUsage() {
   try {
