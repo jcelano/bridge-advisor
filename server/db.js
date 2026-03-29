@@ -75,10 +75,16 @@ const SCHEMA_SQL = `
 
   -- User tiers and access control
   ALTER TABLE users ADD COLUMN IF NOT EXISTS tier TEXT NOT NULL DEFAULT 'free';
-  ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_limit INTEGER NOT NULL DEFAULT 10;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_limit INTEGER NOT NULL DEFAULT 5;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS approved BOOLEAN NOT NULL DEFAULT false;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token TEXT UNIQUE;
   ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token_expires TIMESTAMPTZ;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT false;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_token TEXT UNIQUE;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_token_expires TIMESTAMPTZ;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT UNIQUE;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_subscription_id TEXT;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_status TEXT DEFAULT 'none';
 
   -- Invite codes
   CREATE TABLE IF NOT EXISTS invite_codes (
@@ -103,8 +109,8 @@ const SCHEMA_SQL = `
   );
   CREATE INDEX IF NOT EXISTS idx_daily_usage_lookup ON daily_usage(user_email, usage_date);
 
-  -- Approve all existing users (pre-migration users should retain access)
-  UPDATE users SET approved = true WHERE approved = false AND created_at < NOW() - INTERVAL '1 second';
+  -- Approve and verify all existing users (pre-migration users should retain access)
+  UPDATE users SET approved = true, email_verified = true WHERE created_at < NOW() - INTERVAL '1 second';
 
   -- Feedback
   CREATE TABLE IF NOT EXISTS feedback (

@@ -1,19 +1,34 @@
 <script>
-  import { login } from '$lib/api.js';
+  import { login, resendVerification } from '$lib/api.js';
   import Turnstile from '$lib/components/Turnstile.svelte';
   let { onlogin, onsignup, onforgot, turnstileSiteKey = null } = $props();
   let email = $state('');
   let password = $state('');
   let turnstileToken = $state('');
   let error = $state('');
+  let needsVerification = $state(false);
+  let resendMsg = $state('');
   let loading = $state(false);
 
   async function handleSubmit(e) {
     e.preventDefault();
-    error = ''; loading = true;
+    error = ''; needsVerification = false; resendMsg = ''; loading = true;
     try { const result = await login(email, password, turnstileToken); onlogin(result.user); }
-    catch (err) { error = err.message; }
+    catch (err) {
+      error = err.message;
+      if (err.message.toLowerCase().includes('verify your email')) needsVerification = true;
+    }
     loading = false;
+  }
+
+  async function handleResend() {
+    resendMsg = '';
+    try {
+      const result = await resendVerification(email, turnstileToken);
+      resendMsg = 'Verification email sent! Check your inbox.';
+    } catch (err) {
+      resendMsg = err.message;
+    }
   }
 </script>
 
@@ -35,7 +50,15 @@
         {#if onforgot}<div class="forgot-row"><button type="button" class="link-btn" onclick={onforgot}>Forgot password?</button></div>{/if}
       </div>
       <Turnstile siteKey={turnstileSiteKey} onverify={(t) => turnstileToken = t} />
-      {#if error}<div class="error">{error}</div>{/if}
+      {#if error}
+        <div class="error">
+          {error}
+          {#if needsVerification}
+            <button type="button" class="resend-link" onclick={handleResend}>Resend verification email</button>
+          {/if}
+        </div>
+      {/if}
+      {#if resendMsg}<div class="info">{resendMsg}</div>{/if}
       <button type="submit" class="submit" disabled={loading}>{loading ? 'Signing in...' : 'Sign In'}</button>
     </form>
     {#if onsignup}
@@ -59,6 +82,8 @@
   .field input:focus { border-color: #d4af3760; }
   .forgot-row { text-align: right; margin-top: 4px; }
   .error { background: #1f0d0d; border: 1px solid #3a1a1a; border-radius: 8px; padding: 8px 12px; margin-bottom: 16px; color: #e66; font-size: 13px; }
+  .resend-link { background: none; border: none; color: #d4af37; cursor: pointer; font-size: 12px; text-decoration: underline; padding: 0; display: block; margin-top: 6px; }
+  .info { background: #0d1f0d; border: 1px solid #1a3a1a; border-radius: 8px; padding: 8px 12px; margin-bottom: 16px; color: #8bdb6a; font-size: 13px; }
   .submit { width: 100%; padding: 12px; border-radius: 8px; border: none; background: linear-gradient(135deg, #d4af37, #a08520); color: #0a0a10; font-size: 15px; font-weight: 700; cursor: pointer; }
   .submit:disabled { opacity: 0.7; cursor: wait; }
   .signup-row { text-align: center; margin-top: 20px; font-size: 13px; color: #4a6a4a; border-top: 1px solid #1a2430; padding-top: 16px; }

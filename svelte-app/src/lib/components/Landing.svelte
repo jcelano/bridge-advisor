@@ -8,7 +8,7 @@
     <div class="hero-logo">♠</div>
     <h1>The Stayman Whisperer</h1>
     <p class="tagline">AI-powered bridge analysis that makes you a better player</p>
-    <p class="sub">Get expert bidding, opening lead, card play, and post-mortem analysis — powered by Claude AI.</p>
+    <p class="sub">Get expert bidding, opening lead, card play, and post-mortem analysis — powered by advanced AI.</p>
     <div class="hero-actions">
       <button class="btn-primary" onclick={onShowSignup}>Get Started</button>
       <button class="btn-secondary" onclick={onShowLogin}>Sign In</button>
@@ -59,7 +59,7 @@
       <div class="step">
         <div class="step-num">3</div>
         <h3>Get Expert Analysis</h3>
-        <p>Claude AI analyzes the hand and provides detailed, actionable feedback.</p>
+        <p>AI analyzes the hand and provides detailed, actionable feedback.</p>
       </div>
     </div>
   </section>
@@ -72,7 +72,7 @@
         <h3>Free</h3>
         <div class="price">$0</div>
         <ul>
-          <li>10 analyses per day</li>
+          <li>5 analyses per day</li>
           <li>All advice types</li>
           <li>Hand history</li>
           <li>Share your analyses</li>

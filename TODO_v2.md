@@ -169,15 +169,75 @@ You can do this via:
 - [ ] Enable debug logging, play a hand on Trickster, check console for strategy logs
 - [ ] Verify PBN detection works after hand completion
 
-### 8. Optional Future Work
+### 8. Enable Stripe Pro Tier (When Ready)
 
-- [ ] Add email verification (currently skipped for MVP)
-- [ ] Add Stripe integration for Pro tier payments
-- [ ] Add terms of service / privacy policy pages
+The Stripe integration code is complete but disabled in the UI. To enable:
+
+- [ ] Create a Stripe account at https://dashboard.stripe.com
+- [ ] Create a Product "Pro Tier" with a $3/month recurring Price
+- [ ] Copy the Price ID and set `STRIPE_PRICE_ID` in `.env` and Render
+- [ ] Get API keys from https://dashboard.stripe.com/apikeys
+- [ ] Set `STRIPE_SECRET_KEY` and `STRIPE_PUBLISHABLE_KEY` in `.env` and Render
+- [ ] Create a webhook endpoint at `https://your-app.onrender.com/api/stripe/webhook`
+  - Subscribe to events: `checkout.session.completed`, `customer.subscription.deleted`, `customer.subscription.updated`, `invoice.payment_failed`
+- [ ] Copy the webhook signing secret and set `STRIPE_WEBHOOK_SECRET` in `.env` and Render
+- [ ] Test with Stripe CLI: `stripe trigger checkout.session.completed`
+- [ ] Uncomment the upgrade/manage buttons in `+layout.svelte` (search for "Stripe upgrade/manage")
+- [ ] Update `Landing.svelte` Pro card from "Coming Soon" to "$3/month" with working CTA
+- [ ] Set `FREE_DAILY_LIMIT` env var if you want to change the free tier limit (default: 5)
+
+### 9. Optional Future Work
+
 - [ ] Publish Chrome extension to Chrome Web Store ($5 one-time fee)
 - [ ] Add E2E tests for registration and rate limiting flows
 - [ ] Consider moving JWT to HttpOnly cookies for XSS protection
 - [ ] Add CSRF protection for state-changing endpoints
+
+---
+
+## Phase 13: Email Verification (Required for Login)
+- **Schema**: added `email_verified`, `verification_token`, `verification_token_expires` columns to users table
+- **`generateVerificationToken(email)`** — 24-hour expiry, SHA-256 hashed in DB
+- **`verifyEmailToken(rawToken)`** — verifies token, sets `email_verified=true`, clears token
+- **Login check** — `loginUser()` now requires `email_verified=true` before allowing login
+- **Registration updated** — ALL new users (invite code and non-invite) get a verification email
+- **Invite code users** no longer auto-login — they must verify email first
+- **`GET /api/auth/verify-email/:token`** — verifies and redirects to `APP_URL?verified=true`
+- **`POST /api/auth/resend-verification`** — Turnstile-protected, resends verification email
+- **`VerifyEmail.svelte`** — handles `?verify=TOKEN`, `?verified=true`, and `?verify_error=*` URL params
+- **Login.svelte** — shows "Resend verification email" link when login fails due to unverified email
+- **Existing users migration** — auto-sets `email_verified=true` for all pre-existing users
+
+## Phase 14: Stripe Pro Tier ($3/month)
+- **`stripe` package** installed
+- **Schema**: added `stripe_customer_id`, `stripe_subscription_id`, `subscription_status` columns
+- **`POST /api/stripe/checkout`** (authenticated) — creates Stripe Checkout Session, creates/reuses Stripe customer
+- **`POST /api/stripe/webhook`** (public, raw body) — handles `checkout.session.completed` (activate pro), `customer.subscription.deleted` (revert to free), `customer.subscription.updated`, `invoice.payment_failed` (past_due)
+- **`POST /api/stripe/portal`** (authenticated) — creates Stripe Customer Portal session for managing subscription
+- **Raw body middleware** — `express.raw()` on `/api/stripe/webhook` before `express.json()`
+- **`/api/auth/status`** — now returns `stripePublishableKey`
+- **Landing.svelte** — Pro card updated from "Coming Soon" to "$3/month" with working CTA
+- **Header** — "Upgrade to Pro" button for free users, "Manage" button for pro users
+- **API functions** — `createCheckoutSession()`, `createPortalSession()` in api.js
+
+### Stripe Manual Steps
+- [ ] Create a Stripe account at https://dashboard.stripe.com
+- [ ] Create a Product "Pro Tier" with a $3/month recurring Price
+- [ ] Copy the Price ID and set `STRIPE_PRICE_ID` in `.env` and Render
+- [ ] Get API keys from https://dashboard.stripe.com/apikeys
+- [ ] Set `STRIPE_SECRET_KEY` and `STRIPE_PUBLISHABLE_KEY` in `.env` and Render
+- [ ] Create a webhook endpoint at `https://your-app.onrender.com/api/stripe/webhook`
+  - Subscribe to events: `checkout.session.completed`, `customer.subscription.deleted`, `customer.subscription.updated`, `invoice.payment_failed`
+- [ ] Copy the webhook signing secret and set `STRIPE_WEBHOOK_SECRET` in `.env` and Render
+- [ ] Test with Stripe CLI: `stripe trigger checkout.session.completed`
+
+## Phase 15: Terms of Service & Privacy Policy
+- **`/terms` route** — comprehensive ToS page covering: service description, account requirements, acceptable use, AI disclaimer, subscription/billing ($3/month pro, cancellation, refunds), intellectual property, data usage, rate limits, termination, liability, indemnification, governing law
+- **`/privacy` route** — comprehensive Privacy Policy covering: data collected (account, bridge hands, usage, feedback, payments), how used, third-party services table (Anthropic, Stripe, Resend, Supabase, Cloudflare, Render), data sent to Claude, retention periods, cookies/localStorage, user rights (access, correction, deletion, export), security measures, children's privacy, international transfers
+- **Public routes** — `/terms` and `/privacy` accessible without login (alongside `/share/`)
+- **Footer** — added "Terms" and "Privacy" links
+- **Signup checkbox** — "I agree to the Terms of Service and Privacy Policy" required before registration
+- **Styled consistently** with app dark theme (gold headings, green text, bordered sections)
 
 ---
 
