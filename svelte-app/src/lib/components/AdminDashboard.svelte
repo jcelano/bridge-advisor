@@ -1,12 +1,20 @@
 <script>
   import { onMount } from 'svelte';
-  import { getPendingUsers, approveUser, createInviteCode, getInviteCodes, getAdminUsage, getAdminFeedback } from '$lib/api.js';
+  import { getPendingUsers, approveUser, createInviteCode, getInviteCodes, getAdminUsage, getAdminFeedback, getAdminUsers } from '$lib/api.js';
 
   let pending = $state([]);
   let inviteCodes = $state([]);
   let usageStats = $state(null);
   let feedbackData = $state({ entries: [], total: 0 });
   let loading = $state(true);
+
+  // Users list state
+  let usersData = $state({ users: [], total: 0, hasMore: false });
+  let usersPage = $state(0);
+  let usersSearch = $state('');
+  let usersLoading = $state(false);
+  let searchTimeout = null;
+  const PAGE_SIZE = 25;
   let newCodeTier = $state('free');
   let newCodeUses = $state(1);
   let generatedCode = $state('');
@@ -24,7 +32,24 @@
       getAdminUsage(),
       getAdminFeedback(),
     ]);
+    await loadUsers();
   }
+
+  async function loadUsers() {
+    usersLoading = true;
+    usersData = await getAdminUsers({ limit: PAGE_SIZE, offset: usersPage * PAGE_SIZE, search: usersSearch });
+    usersLoading = false;
+  }
+
+  function handleSearchInput(e) {
+    usersSearch = e.target.value;
+    usersPage = 0;
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(() => loadUsers(), 300);
+  }
+
+  function usersNextPage() { usersPage++; loadUsers(); }
+  function usersPrevPage() { if (usersPage > 0) { usersPage--; loadUsers(); } }
 
   async function handleApprove(email) {
     await approveUser(email, { tier: 'free' });
@@ -59,6 +84,57 @@
         </div>
       </section>
     {/if}
+
+    <!-- Users -->
+    <section class="section">
+      <h3>All Users ({usersData.total})</h3>
+      <div class="search-row">
+        <input type="text" class="search-input" placeholder="Search by name or email..." value={usersSearch} oninput={handleSearchInput} />
+      </div>
+      {#if usersLoading}
+        <p class="muted">Loading...</p>
+      {:else if usersData.users.length === 0}
+        <p class="muted">{usersSearch ? 'No users found' : 'No users yet'}</p>
+      {:else}
+        <div class="users-table">
+          <div class="users-header">
+            <span class="col-name">User</span>
+            <span class="col-tier">Tier</span>
+            <span class="col-status">Status</span>
+            <span class="col-usage">Today</span>
+            <span class="col-usage">All Time</span>
+            <span class="col-date">Joined</span>
+          </div>
+          {#each usersData.users as u}
+            <div class="users-row">
+              <span class="col-name">
+                <span class="name">{u.name}</span>
+                <span class="email">{u.email}</span>
+              </span>
+              <span class="col-tier">
+                <span class="tier-tag" class:pro={u.tier === 'pro'} class:admin={u.tier === 'admin'}>{u.tier}</span>
+                <span class="muted limit">{u.dailyLimit}/day</span>
+              </span>
+              <span class="col-status">
+                {#if !u.emailVerified}<span class="status-dot unverified" title="Email not verified">&#9679;</span>
+                {:else if !u.approved}<span class="status-dot pending" title="Pending approval">&#9679;</span>
+                {:else}<span class="status-dot active" title="Active">&#9679;</span>{/if}
+              </span>
+              <span class="col-usage">{u.queriesToday}</span>
+              <span class="col-usage">{u.queriesAllTime}</span>
+              <span class="col-date">{new Date(u.createdAt).toLocaleDateString()}</span>
+            </div>
+          {/each}
+        </div>
+        <div class="paging-row">
+          <button class="page-btn" onclick={usersPrevPage} disabled={usersPage === 0}>Prev</button>
+          <span class="paging-info">
+            {usersPage * PAGE_SIZE + 1}–{Math.min((usersPage + 1) * PAGE_SIZE, usersData.total)} of {usersData.total}
+          </span>
+          <button class="page-btn" onclick={usersNextPage} disabled={!usersData.hasMore}>Next</button>
+        </div>
+      {/if}
+    </section>
 
     <!-- Pending Approvals -->
     <section class="section">
@@ -173,6 +249,34 @@
   .code-row { display: flex; gap: 10px; align-items: center; padding: 6px 0; border-bottom: 1px solid #0a1a0a; font-size: 12px; }
   .code-row code { color: #c0d8c0; font-size: 13px; }
   .tier-tag { padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; background: #1a3a2a; color: #6a8a6a; }
+  .tier-tag.pro { background: #3a7a3a30; color: #8bdb6a; }
+  .tier-tag.admin { background: #d4af3730; color: #d4af37; }
+
+  /* Users table */
+  .search-row { margin-bottom: 12px; }
+  .search-input { width: 100%; padding: 8px 12px; background: #101820; color: #c0d0e0; border: 1px solid #1a2a3a; border-radius: 6px; font-size: 13px; outline: none; box-sizing: border-box; }
+  .search-input:focus { border-color: #d4af3760; }
+  .users-table { overflow-x: auto; }
+  .users-header, .users-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 12px; }
+  .users-header { color: #5a8a5a; font-weight: 600; text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px; border-bottom: 1px solid #1a3a1a; padding-bottom: 8px; margin-bottom: 4px; }
+  .users-row { border-bottom: 1px solid #0e1e0e; }
+  .col-name { flex: 2; min-width: 0; overflow: hidden; }
+  .col-name .name { display: block; color: #c0d8c0; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .col-name .email { display: block; color: #4a6a4a; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .col-tier { flex: 0.8; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+  .col-tier .limit { font-size: 10px; }
+  .col-status { flex: 0.4; text-align: center; }
+  .col-usage { flex: 0.5; text-align: center; color: #8aa08a; font-size: 13px; }
+  .col-date { flex: 0.8; color: #4a6a4a; font-size: 11px; }
+  .status-dot { font-size: 10px; }
+  .status-dot.active { color: #8bdb6a; }
+  .status-dot.pending { color: #d4af37; }
+  .status-dot.unverified { color: #e66; }
+  .paging-row { display: flex; justify-content: center; align-items: center; gap: 12px; margin-top: 12px; }
+  .page-btn { padding: 4px 12px; border-radius: 6px; border: 1px solid #2a3a2a; background: transparent; color: #6a8a6a; cursor: pointer; font-size: 12px; }
+  .page-btn:disabled { opacity: 0.3; cursor: default; }
+  .page-btn:not(:disabled):hover { background: #1a3a1a; }
+  .paging-info { font-size: 12px; color: #4a6a4a; }
 
   /* Feedback */
   .feedback-list { max-height: 400px; overflow-y: auto; }

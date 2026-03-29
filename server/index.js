@@ -447,8 +447,11 @@ app.get('/api/admin/invite-codes', requireAuth, requireAdmin, async (req, res) =
 
 app.get('/api/admin/users', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const users = await listUsers();
-    res.json({ users });
+    const limit = Math.min(parseInt(req.query.limit) || 25, 100);
+    const offset = parseInt(req.query.offset) || 0;
+    const search = (req.query.search || '').trim();
+    const result = await listUsers({ limit, offset, search });
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
