@@ -6,7 +6,8 @@
   } from '$lib/bridge/constants.js';
   import { parsePBN, generatePBN } from '$lib/bridge/pbn.js';
   import { buildPrompt } from '$lib/bridge/prompt.js';
-  import { getAdvice, healthCheck, getHistory, shareHistoryEntry, unshareHistoryEntry } from '$lib/api.js';
+  import { getAdvice, healthCheck, getHistory, shareHistoryEntry, unshareHistoryEntry, getUser, getUsage } from '$lib/api.js';
+  import AdminDashboard from '$lib/components/AdminDashboard.svelte';
   import HandEditor from '$lib/components/HandEditor.svelte';
   import HandDisplay from '$lib/components/HandDisplay.svelte';
   import BiddingBox from '$lib/components/BiddingBox.svelte';
@@ -17,6 +18,8 @@
   import AnalysisWithViewer from '$lib/components/AnalysisWithViewer.svelte';
 
   // ── State ─────────────────────────────────────────────
+  let currentUser = $state(getUser());
+  let isAdmin = $derived(currentUser?.tier === 'admin');
   let tab = $state('pbn');
   let pbnText = $state('');
   let mySeat = $state('South');
@@ -361,6 +364,8 @@
       const result = await getAdvice(prompt, { handContext });
       response = result.text;
       history = [...history, { type: adviceType, response: result.text }];
+      // Signal layout to refresh usage counter
+      window.dispatchEvent(new CustomEvent('usage-changed'));
     } catch (err) { response = 'Error: ' + err.message; }
     loading = false;
   }
@@ -400,7 +405,14 @@
     <button class="tab" class:active={tab === 'history'} onclick={() => tab = 'history'}>This Hand ({history.length})</button>
   {/if}
   <button class="tab" class:active={tab === 'saved'} onclick={() => { tab = 'saved'; if (!savedHistory) loadSavedHistory(); }}>View Past Hands</button>
+  {#if isAdmin}
+    <button class="tab admin-tab" class:active={tab === 'admin'} onclick={() => tab = 'admin'}>Admin</button>
+  {/if}
 </div>
+
+{#if tab === 'admin' && isAdmin}
+  <AdminDashboard />
+{/if}
 
 <!-- PBN Tab -->
 {#if tab === 'pbn'}

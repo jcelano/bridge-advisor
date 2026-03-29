@@ -1,15 +1,17 @@
 <script>
   import { login } from '$lib/api.js';
-  let { onlogin } = $props();
+  import Turnstile from '$lib/components/Turnstile.svelte';
+  let { onlogin, onsignup, turnstileSiteKey = null } = $props();
   let email = $state('');
   let password = $state('');
+  let turnstileToken = $state('');
   let error = $state('');
   let loading = $state(false);
 
   async function handleSubmit(e) {
     e.preventDefault();
     error = ''; loading = true;
-    try { const result = await login(email, password); onlogin(result.user); }
+    try { const result = await login(email, password, turnstileToken); onlogin(result.user); }
     catch (err) { error = err.message; }
     loading = false;
   }
@@ -31,9 +33,15 @@
         <label for="password">Password</label>
         <input id="password" type="password" bind:value={password} required placeholder="••••••••" />
       </div>
+      <Turnstile siteKey={turnstileSiteKey} onverify={(t) => turnstileToken = t} />
       {#if error}<div class="error">{error}</div>{/if}
       <button type="submit" class="submit" disabled={loading}>{loading ? 'Signing in...' : 'Sign In'}</button>
     </form>
+    {#if onsignup}
+      <div class="signup-row">
+        Don't have an account? <button class="link-btn" onclick={onsignup}>Create one</button>
+      </div>
+    {/if}
   </div>
 </div>
 
@@ -51,4 +59,6 @@
   .error { background: #1f0d0d; border: 1px solid #3a1a1a; border-radius: 8px; padding: 8px 12px; margin-bottom: 16px; color: #e66; font-size: 13px; }
   .submit { width: 100%; padding: 12px; border-radius: 8px; border: none; background: linear-gradient(135deg, #d4af37, #a08520); color: #0a0a10; font-size: 15px; font-weight: 700; cursor: pointer; }
   .submit:disabled { opacity: 0.7; cursor: wait; }
+  .signup-row { text-align: center; margin-top: 20px; font-size: 13px; color: #4a6a4a; border-top: 1px solid #1a2430; padding-top: 16px; }
+  .link-btn { background: none; border: none; color: #d4af37; cursor: pointer; font-size: 13px; text-decoration: underline; padding: 0; }
 </style>

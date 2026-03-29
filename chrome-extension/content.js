@@ -32,6 +32,14 @@
   let lastPBN          = null;
   let handEndPromptShown = false;  // prevents double-prompt per hand
   let lastHandEndAt    = 0;        // debounce: ignore signals fired < 3 s apart
+  let debugLogging     = false;
+
+  // Load debug preference
+  try { chrome.storage?.local?.get(['debugLogging'], (d) => { debugLogging = !!d?.debugLogging; }); } catch (_) {}
+
+  function debugLog(...args) {
+    if (debugLogging) console.log('[BA]', ...args);
+  }
 
   // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -90,10 +98,11 @@
 
   // ── PBN capture ──────────────────────────────────────────────────────────
 
-  function onPBNDetected(rawPBN) {
+  function onPBNDetected(rawPBN, source = 'unknown') {
     const pbn = rawPBN.trim();
     if (!pbn || pbn === lastPBN) return;
     lastPBN = pbn;
+    debugLog(`PBN captured via ${source} (${pbn.length} chars)`);
 
     // Guard: chrome.storage can be undefined if the extension was reloaded
     // while this content script was still running (context invalidated).
@@ -112,8 +121,7 @@
   window.addEventListener('message', (e) => {
     if (e.source !== window) return;
     if (e.data?.type === '__BA_PBN__' && e.data.pbn) {
-      console.log('[BA] Received PBN from main world via postMessage');
-      onPBNDetected(e.data.pbn);
+      onPBNDetected(e.data.pbn, 'main-world postMessage');
     }
   });
 
@@ -124,14 +132,40 @@
     const response = await _fetch.apply(this, args);
     try {
       const ct = response.headers.get('content-type') || '';
-      if (ct.match(/text|octet-stream|pbn|plain/i)) {
+      if (ct.match(/text|octet-stream|pbn|plain|json/i)) {
         response.clone().text().then(text => {
-          if (isPBN(text)) onPBNDetected(text);
+          if (isPBN(text)) { onPBNDetected(text, 'fetch interceptor'); return; }
+          // Check JSON responses for nested PBN strings
+          if (ct.includes('json')) {
+            try {
+              const obj = JSON.parse(text);
+              const pbn = findPBNInObject(obj);
+              if (pbn) onPBNDetected(pbn, 'fetch JSON payload');
+            } catch (_) {}
+          }
         }).catch(() => {});
       }
     } catch (_) {}
     return response;
   };
+
+  /** Recursively search an object for a string value that looks like PBN */
+  function findPBNInObject(obj, depth = 0) {
+    if (depth > 5) return null;
+    if (typeof obj === 'string') return isPBN(obj) ? obj : null;
+    if (Array.isArray(obj)) {
+      for (const item of obj) {
+        const found = findPBNInObject(item, depth + 1);
+        if (found) return found;
+      }
+    } else if (obj && typeof obj === 'object') {
+      for (const val of Object.values(obj)) {
+        const found = findPBNInObject(val, depth + 1);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
 
   // ── Strategy B: Intercept XMLHttpRequest ─────────────────────────────────
 
@@ -145,7 +179,7 @@
   XMLHttpRequest.prototype.send = function (...args) {
     this.addEventListener('load', function () {
       try {
-        if (isPBN(this.responseText)) onPBNDetected(this.responseText);
+        if (isPBN(this.responseText)) onPBNDetected(this.responseText, 'XHR interceptor');
       } catch (_) {}
     });
     return _xhrSend.apply(this, args);
@@ -166,7 +200,7 @@
           if (!raw) return;
 
           // Direct PBN string (e.g. blob text)
-          if (isPBN(raw)) { onPBNDetected(raw); return; }
+          if (isPBN(raw)) { onPBNDetected(raw, 'WebSocket raw'); return; }
 
           // JSON payload — parse once and check multiple things
           const obj = JSON.parse(raw);
@@ -195,7 +229,7 @@
             typeof obj?.data === 'string' ? obj.data : null,
           ];
           for (const c of candidates) {
-            if (c && isPBN(c)) { onPBNDetected(c); return; }
+            if (c && isPBN(c)) { onPBNDetected(c, 'WebSocket JSON field'); return; }
           }
         } catch (_) {}
       });
@@ -215,7 +249,7 @@
       try {
         const resp = await fetch(href);
         const text = await resp.text();
-        if (isPBN(text)) onPBNDetected(text);
+        if (isPBN(text)) onPBNDetected(text, 'blob click interceptor');
       } catch (_) {}
     }
   }, true /* capture phase — runs before Trickster's handler */);
@@ -232,7 +266,7 @@
     );
     for (const el of candidates) {
       const text = el.value ?? el.textContent ?? '';
-      if (isPBN(text)) { onPBNDetected(text); return; }
+      if (isPBN(text)) { onPBNDetected(text, 'DOM MutationObserver'); return; }
     }
 
     // ── (2) Hand-end detection — using Trickster's actual DOM IDs ────────────
@@ -251,14 +285,32 @@
     const hasScorecard  = isVisible(document.getElementById('scorecard'));
     const hasReviewMsg  = isVisible(document.getElementById('review-deal-message'));
 
-    if (hasScorecard || hasReviewMsg) {
+    // Fallback: check for text patterns that indicate hand completion
+    let hasTextSignal = false;
+    if (!hasScorecard && !hasReviewMsg) {
+      const body = document.body.textContent || '';
+      hasTextSignal = /\b(hand complete|final score|review deal|export hand to pbn)\b/i.test(body);
+    }
+
+    if (hasScorecard || hasReviewMsg || hasTextSignal) {
       lastHandEndAt      = Date.now();
       handEndPromptShown = true;
       showHandEndPrompt();
     }
   }
 
-  const domObserver = new MutationObserver(scanDOM);
+  // Throttle MutationObserver to at most once per animation frame
+  let scanScheduled = false;
+  function throttledScanDOM(mutations) {
+    if (scanScheduled) return;
+    scanScheduled = true;
+    requestAnimationFrame(() => {
+      scanScheduled = false;
+      scanDOM(mutations);
+    });
+  }
+
+  const domObserver = new MutationObserver(throttledScanDOM);
   if (document.body) {
     domObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
   } else {

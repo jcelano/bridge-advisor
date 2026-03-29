@@ -4,14 +4,29 @@ import Anthropic from '@anthropic-ai/sdk';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { requireAuth, loginUser, verifyToken } from './auth.js';
+import {
+  requireAuth, requireAdmin, loginUser, verifyToken,
+  createUser, findUser, redeemInviteCode, markInviteUsed,
+  createInviteCode, listInviteCodes, approveUser, getPendingUsers, listUsers,
+} from './auth.js';
 import { addEntry, getEntries, getEntry, deleteEntry, clearHistory, createShareToken, revokeShareToken, getSharedEntry } from './history.js';
-import { initSchema } from './db.js';
+import { initSchema, getOne, getAll, query as dbQuery } from './db.js';
 
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+
+// ── Simple structured logger ─────────────────────────────────
+const log = {
+  _fmt(level, ctx, msg) {
+    const ts = new Date().toISOString();
+    console.log(`[${ts}] [${level}] [${ctx}] ${msg}`);
+  },
+  info(ctx, msg)  { this._fmt('INFO', ctx, msg); },
+  warn(ctx, msg)  { this._fmt('WARN', ctx, msg); },
+  error(ctx, msg) { this._fmt('ERROR', ctx, msg); },
+};
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -42,9 +57,53 @@ const client = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 });
 
+// ── Cloudflare Turnstile verification ────────────────────────
+const TURNSTILE_SECRET = process.env.TURNSTILE_SECRET_KEY;
+const TURNSTILE_ENABLED = AUTH_ENABLED && !!TURNSTILE_SECRET;
+
+async function verifyTurnstile(token) {
+  if (!TURNSTILE_ENABLED) return true; // skip in dev or when not configured
+  if (!token) return false;
+  try {
+    const res = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `secret=${encodeURIComponent(TURNSTILE_SECRET)}&response=${encodeURIComponent(token)}`,
+    });
+    const data = await res.json();
+    return data.success === true;
+  } catch (err) {
+    log.error('turnstile', err.message);
+    return false;
+  }
+}
+
 // ── Middleware ─────────────────────────────────────────────────
-app.use(cors());
-app.use(express.json());
+
+// CORS — restrict origins in production
+const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim())
+  : ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:3001'];
+
+app.use(cors({
+  origin(origin, callback) {
+    // Allow requests with no origin (curl, mobile apps, same-origin)
+    if (!origin || ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+    callback(new Error('Not allowed by CORS'));
+  },
+}));
+
+app.use(express.json({ limit: '50kb' }));
+
+// HTTPS redirect in production (Render terminates TLS at the proxy)
+if (process.env.NODE_ENV === 'production') {
+  app.use((req, res, next) => {
+    if (req.headers['x-forwarded-proto'] === 'http') {
+      return res.redirect(301, `https://${req.headers.host}${req.url}`);
+    }
+    next();
+  });
+}
 
 // Serve static files in production
 const SERVE_DIR = process.env.SERVE_DIR || 'dist-svelte';
@@ -56,13 +115,17 @@ if (process.env.NODE_ENV === 'production') {
 
 app.post('/api/auth/login', async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, turnstileToken } = req.body;
     if (!email || !password) {
       return res.status(400).json({ error: 'Email and password are required' });
     }
 
+    if (!await verifyTurnstile(turnstileToken)) {
+      return res.status(403).json({ error: 'Human verification failed. Please try again.' });
+    }
+
     const result = await loginUser(email, password);
-    console.log(`♠ Login: ${result.user.name} (${result.user.email})`);
+    log.info('auth', `Login: ${result.user.name} (${result.user.email})`);
     res.json(result);
   } catch (err) {
     res.status(401).json({ error: err.message });
@@ -85,17 +148,231 @@ app.get('/api/auth/verify', (req, res) => {
     return res.json({ valid: false });
   }
 
-  res.json({ valid: true, user: { email: decoded.email, name: decoded.name } });
+  res.json({ valid: true, user: { email: decoded.email, name: decoded.name, tier: decoded.tier } });
 });
 
 // Auth status — tells the frontend whether auth is required
 app.get('/api/auth/status', (req, res) => {
-  res.json({ authEnabled: AUTH_ENABLED });
+  res.json({
+    authEnabled: AUTH_ENABLED,
+    turnstileSiteKey: process.env.TURNSTILE_SITE_KEY || null,
+  });
+});
+
+// ── Registration Routes (public) ─────────────────────────────
+
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const { email, password, name, inviteCode, turnstileToken } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' });
+    }
+    if (password.length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    }
+
+    if (!await verifyTurnstile(turnstileToken)) {
+      return res.status(403).json({ error: 'Human verification failed. Please try again.' });
+    }
+
+    let approved = false;
+    let tier = 'free';
+    let dailyLimit = 10;
+
+    // If invite code provided, validate and apply
+    if (inviteCode) {
+      const invite = await redeemInviteCode(inviteCode);
+      if (!invite) {
+        return res.status(400).json({ error: 'Invalid or expired invite code' });
+      }
+      approved = true;
+      tier = invite.tier;
+      dailyLimit = tier === 'pro' ? 50 : 10;
+    }
+
+    const user = await createUser(email, password, name, { approved, tier, dailyLimit });
+
+    if (inviteCode) {
+      await markInviteUsed(inviteCode, user.email);
+    }
+
+    if (approved) {
+      // Auto-login if invite code was used
+      const { loginUser: login } = await import('./auth.js');
+      const result = await login(email, password);
+      log.info('auth', `Register+Login: ${result.user.name} (${result.user.email}) via invite code`);
+      return res.json({ ...result, message: 'Account created and logged in' });
+    }
+
+    log.info('auth', `Access request: ${user.name} (${user.email})`);
+    res.json({ message: 'Account created. Your access request is pending approval.' });
+  } catch (err) {
+    if (err.message.includes('already exists')) {
+      return res.status(409).json({ error: 'An account with this email already exists' });
+    }
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Admin Routes ──────────────────────────────────────────────
+
+app.get('/api/admin/pending', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const users = await getPendingUsers();
+    res.json({ users });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/approve/:email', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { tier, dailyLimit } = req.body;
+    await approveUser(req.params.email, { tier, dailyLimit });
+    log.info('admin', `Approved: ${req.params.email} (tier: ${tier || 'free'})`);
+    res.json({ approved: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/invite-codes', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { tier, uses, expiresInDays } = req.body;
+    const code = await createInviteCode(req.user.email, { tier, uses, expiresInDays });
+    res.json(code);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/admin/invite-codes', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const codes = await listInviteCodes();
+    res.json({ codes });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/admin/users', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const users = await listUsers();
+    res.json({ users });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/admin/usage', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const today = await getOne(
+      `SELECT COALESCE(SUM(query_count), 0) as total_queries,
+              COALESCE(SUM(tokens_used), 0) as total_tokens,
+              COUNT(DISTINCT user_email) as active_users
+       FROM daily_usage WHERE usage_date = CURRENT_DATE`
+    );
+    const topUsers = await getAll(
+      `SELECT user_email, query_count, tokens_used
+       FROM daily_usage WHERE usage_date = CURRENT_DATE
+       ORDER BY query_count DESC LIMIT 10`
+    );
+    res.json({ today, topUsers });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Rate Limiting ─────────────────────────────────────────────
+
+async function checkRateLimit(req, res, next) {
+  if (process.env.AUTH_ENABLED === 'false') return next();
+
+  const email = req.user?.email;
+  if (!email) return res.status(401).json({ error: 'Not authenticated' });
+
+  try {
+    // Get user's daily limit from database (JWT tier may be stale)
+    const user = await findUser(email);
+    const dailyLimit = user?.daily_limit || 10;
+
+    // Upsert today's usage row and get current count
+    const usage = await getOne(
+      `INSERT INTO daily_usage (user_email, usage_date, query_count)
+       VALUES ($1, CURRENT_DATE, 0)
+       ON CONFLICT (user_email, usage_date) DO NOTHING
+       RETURNING query_count`,
+      [email]
+    );
+    // If INSERT returned nothing, row already exists — fetch it
+    const current = usage || await getOne(
+      `SELECT query_count FROM daily_usage WHERE user_email = $1 AND usage_date = CURRENT_DATE`,
+      [email]
+    );
+
+    const used = current?.query_count || 0;
+    if (used >= dailyLimit) {
+      return res.status(429).json({
+        error: 'Daily analysis limit reached',
+        limit: dailyLimit,
+        used,
+        tier: user?.tier || 'free',
+        resetsAt: 'midnight UTC',
+      });
+    }
+
+    // Attach usage info for post-response increment
+    req.dailyUsage = { email, used, limit: dailyLimit };
+    next();
+  } catch (err) {
+    log.error('rate-limit', err.message);
+    next(); // Don't block on rate limit errors
+  }
+}
+
+async function incrementUsage(email, inputTokens, outputTokens) {
+  try {
+    await dbQuery(
+      `UPDATE daily_usage
+       SET query_count = query_count + 1,
+           tokens_used = tokens_used + $2
+       WHERE user_email = $1 AND usage_date = CURRENT_DATE`,
+      [email, (inputTokens || 0) + (outputTokens || 0)]
+    );
+  } catch (err) {
+    log.warn('usage', `Failed to increment: ${err.message}`);
+  }
+}
+
+// ── Usage endpoint (authenticated) ────────────────────────────
+
+app.get('/api/usage', requireAuth, async (req, res) => {
+  const email = req.user?.email;
+  if (!email) return res.status(401).json({ error: 'Not authenticated' });
+
+  try {
+    const user = await findUser(email);
+    const usage = await getOne(
+      `SELECT query_count, tokens_used FROM daily_usage
+       WHERE user_email = $1 AND usage_date = CURRENT_DATE`,
+      [email]
+    );
+
+    res.json({
+      tier: user?.tier || 'free',
+      dailyLimit: user?.daily_limit || 10,
+      usedToday: usage?.query_count || 0,
+      remainingToday: Math.max(0, (user?.daily_limit || 10) - (usage?.query_count || 0)),
+      tokensToday: usage?.tokens_used || 0,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ── Protected Routes ──────────────────────────────────────────
 
-app.post('/api/advice', requireAuth, async (req, res) => {
+app.post('/api/advice', requireAuth, checkRateLimit, async (req, res) => {
   try {
     const { prompt, maxTokens = 1500, handContext } = req.body;
 
@@ -105,7 +382,7 @@ app.post('/api/advice', requireAuth, async (req, res) => {
 
     const userName = req.user?.name || 'anonymous';
     const userEmail = req.user?.email || 'anonymous';
-    console.log(`\n♠ Query from ${userName} (${prompt.length} chars)`);
+    log.info('advice', `Query from ${userName} (${prompt.length} chars)`);
 
     const message = await client.messages.create({
       model: MODEL,
@@ -130,7 +407,7 @@ Rules for your response:
       .replace(/[\n\r]+#{1,6}\s*$/m, '')  // strip trailing stray heading (e.g. "##" at end)
       .trimEnd();
 
-    console.log(`♠ Response: ${text.slice(0, 80)}...`);
+    log.info('advice', `Response: ${text.slice(0, 80)}...`);
 
     // Auto-save to history
     let historyId = null;
@@ -150,8 +427,11 @@ Rules for your response:
       });
       historyId = entry.id;
     } catch (e) {
-      console.warn('Failed to save history:', e.message);
+      log.warn('history', `Failed to save: ${e.message}`);
     }
+
+    // Increment daily usage counter
+    await incrementUsage(userEmail, message.usage?.input_tokens, message.usage?.output_tokens);
 
     res.json({
       text,
@@ -160,7 +440,7 @@ Rules for your response:
       historyId,
     });
   } catch (error) {
-    console.error('API Error:', error.message);
+    log.error('advice', error.message);
 
     if (error.status === 401) {
       return res.status(401).json({ error: 'Invalid Anthropic API key. Check your .env file.' });
@@ -238,7 +518,7 @@ app.post('/api/history/:id/share', requireAuth, async (req, res) => {
     if (!token) return res.status(404).json({ error: 'Entry not found' });
     res.json({ token, url: `/share/${token}` });
   } catch (err) {
-    console.error('Share token error:', err.message);
+    log.error('share', err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -253,7 +533,7 @@ app.delete('/api/history/:id/share', requireAuth, async (req, res) => {
     if (!ok) return res.status(404).json({ error: 'Entry not found' });
     res.json({ revoked: true });
   } catch (err) {
-    console.error('Revoke share error:', err.message);
+    log.error('share', `Revoke: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 });
@@ -265,14 +545,87 @@ app.get('/api/share/:token', async (req, res) => {
     if (!entry) return res.status(404).json({ error: 'Shared entry not found' });
     res.json(entry);
   } catch (err) {
-    console.error('Share lookup error:', err.message);
+    log.error('share', `Lookup: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Feedback Routes ───────────────────────────────────────────
+
+app.post('/api/feedback', async (req, res) => {
+  try {
+    const { category, message, browserInfo, pageUrl, turnstileToken, email } = req.body;
+
+    if (!message || message.trim().length === 0) {
+      return res.status(400).json({ error: 'Message is required' });
+    }
+    if (message.length > 2000) {
+      return res.status(400).json({ error: 'Message must be under 2000 characters' });
+    }
+
+    if (!await verifyTurnstile(turnstileToken)) {
+      return res.status(403).json({ error: 'Human verification failed. Please try again.' });
+    }
+
+    // Try to get user email from auth token if present
+    let userEmail = email || null;
+    const header = req.headers.authorization;
+    if (header?.startsWith('Bearer ')) {
+      const decoded = verifyToken(header.split(' ')[1]);
+      if (decoded?.email) userEmail = decoded.email;
+    }
+
+    await dbQuery(
+      `INSERT INTO feedback (user_email, category, message, browser_info, page_url)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [userEmail, category || 'general', message.trim(), browserInfo ? JSON.stringify(browserInfo) : null, pageUrl || null]
+    );
+
+    log.info('feedback', `New ${category || 'general'} from ${userEmail || 'anonymous'}`);
+    res.json({ success: true });
+  } catch (err) {
+    log.error('feedback', err.message);
+    res.status(500).json({ error: 'Failed to submit feedback' });
+  }
+});
+
+app.get('/api/admin/feedback', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 50, 100);
+    const offset = parseInt(req.query.offset) || 0;
+    const entries = await getAll(
+      `SELECT id, user_email, category, message, browser_info, page_url, created_at
+       FROM feedback ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
+      [limit, offset]
+    );
+    const total = await getOne('SELECT COUNT(*) as count FROM feedback');
+    res.json({ entries, total: parseInt(total?.count || 0) });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
 // ── Health check (public) ─────────────────────────────────────
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', model: MODEL, authEnabled: AUTH_ENABLED });
+app.get('/api/health', async (req, res) => {
+  let dbOk = false;
+  try {
+    await dbQuery('SELECT 1');
+    dbOk = true;
+  } catch (_) {}
+
+  const status = dbOk ? 'ok' : 'degraded';
+  res.status(dbOk ? 200 : 503).json({
+    status,
+    db: dbOk,
+    model: MODEL,
+    authEnabled: AUTH_ENABLED,
+  });
+});
+
+// ── Global error handler ─────────────────────────────────────
+app.use((err, req, res, _next) => {
+  log.error('server', `Unhandled: ${err.message}`);
+  res.status(500).json({ error: 'Internal server error' });
 });
 
 // ── Catch-all for production SPA routing ──────────────────────

@@ -68,6 +68,15 @@ document.addEventListener('DOMContentLoaded', () => {
     if (e.key === 'Enter') document.getElementById('btn-save').click();
   });
 
+  // ── Debug logging toggle ──────────────────────────────────────────────
+  const debugToggle = document.getElementById('debug-toggle');
+  chrome.storage.local.get(['debugLogging'], (data) => {
+    debugToggle.checked = !!data.debugLogging;
+  });
+  debugToggle.addEventListener('change', () => {
+    chrome.storage.local.set({ debugLogging: debugToggle.checked });
+  });
+
   // ── Helpers ─────────────────────────────────────────────────────────────
   function formatAgo(ts) {
     const secs = Math.floor((Date.now() - ts) / 1000);

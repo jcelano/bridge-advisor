@@ -20,13 +20,24 @@ chrome.runtime.onMessage.addListener((message, sender) => {
   // (it's a browser-level injection, not a <script> tag) so we can access
   // Trickster's window globals like ExportHandToPTN.
   if (message.type === 'INJECT_MAIN_WORLD' && sender.tab?.id) {
-    chrome.scripting.executeScript({
-      target: { tabId: sender.tab.id },
-      world: 'MAIN',
-      files: ['main-world.js'],
-    }).catch(err => console.warn('[BA background] main-world inject failed:', err));
+    const tabId = sender.tab.id;
+    injectMainWorld(tabId, 0);
   }
 });
+
+// Retry main-world.js injection up to 3 times with backoff
+function injectMainWorld(tabId, attempt) {
+  chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    files: ['main-world.js'],
+  }).catch(err => {
+    console.warn(`[BA background] main-world inject attempt ${attempt + 1} failed:`, err);
+    if (attempt < 2) {
+      setTimeout(() => injectMainWorld(tabId, attempt + 1), 500 * (attempt + 1));
+    }
+  });
+}
 
 // Clear badge when the tab navigates (new page = fresh state)
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {

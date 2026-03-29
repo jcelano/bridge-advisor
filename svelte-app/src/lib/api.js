@@ -37,11 +37,11 @@ function authHeaders() {
 }
 
 // ── Auth API ──────────────────────────────────────────────────
-export async function login(email, password) {
+export async function login(email, password, turnstileToken) {
   const res = await fetch(`${API_BASE}/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email, password, turnstileToken }),
   });
 
   if (!res.ok) {
@@ -81,6 +81,86 @@ export async function getAuthStatus() {
   }
 }
 
+// ── Registration API ─────────────────────────────────────────
+export async function register(email, password, name, inviteCode, turnstileToken) {
+  const res = await fetch(`${API_BASE}/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password, name, inviteCode: inviteCode || undefined, turnstileToken }),
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Registration failed');
+
+  // If invite code was used, auto-login happened
+  if (data.token) {
+    setAuth(data.token, data.user);
+  }
+  return data;
+}
+
+// ── Usage API ────────────────────────────────────────────────
+export async function getUsage() {
+  try {
+    const res = await fetch(`${API_BASE}/usage`, { headers: authHeaders() });
+    if (res.status === 401) { clearAuth(); return null; }
+    return res.ok ? await res.json() : null;
+  } catch {
+    return null;
+  }
+}
+
+// ── Admin API ────────────────────────────────────────────────
+export async function getPendingUsers() {
+  const res = await fetch(`${API_BASE}/admin/pending`, { headers: authHeaders() });
+  return res.ok ? (await res.json()).users : [];
+}
+
+export async function approveUser(email, opts = {}) {
+  const res = await fetch(`${API_BASE}/admin/approve/${encodeURIComponent(email)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(opts),
+  });
+  return res.ok;
+}
+
+export async function createInviteCode(opts = {}) {
+  const res = await fetch(`${API_BASE}/admin/invite-codes`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(opts),
+  });
+  return res.ok ? res.json() : null;
+}
+
+export async function getInviteCodes() {
+  const res = await fetch(`${API_BASE}/admin/invite-codes`, { headers: authHeaders() });
+  return res.ok ? (await res.json()).codes : [];
+}
+
+export async function getAdminUsage() {
+  const res = await fetch(`${API_BASE}/admin/usage`, { headers: authHeaders() });
+  return res.ok ? res.json() : null;
+}
+
+// ── Feedback API ─────────────────────────────────────────────
+export async function submitFeedback({ category, message, browserInfo, pageUrl, turnstileToken, email }) {
+  const res = await fetch(`${API_BASE}/feedback`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ category, message, browserInfo, pageUrl, turnstileToken, email }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Failed to submit feedback');
+  return data;
+}
+
+export async function getAdminFeedback(limit = 50, offset = 0) {
+  const res = await fetch(`${API_BASE}/admin/feedback?limit=${limit}&offset=${offset}`, { headers: authHeaders() });
+  return res.ok ? res.json() : { entries: [], total: 0 };
+}
+
 // ── Bridge API ────────────────────────────────────────────────
 export async function getAdvice(prompt, { maxTokens = 1500, handContext = {} } = {}) {
   const res = await fetch(`${API_BASE}/advice`, {
@@ -95,6 +175,11 @@ export async function getAdvice(prompt, { maxTokens = 1500, handContext = {} } =
   if (res.status === 401) {
     clearAuth();
     throw new Error('Session expired. Please log in again.');
+  }
+
+  if (res.status === 429) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Daily analysis limit reached. Try again tomorrow.');
   }
 
   if (!res.ok) {

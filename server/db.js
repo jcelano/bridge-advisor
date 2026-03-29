@@ -5,7 +5,7 @@ dotenv.config();
 
 const { Pool } = pg;
 
-console.log('DATABASE_URL:', process.env.DATABASE_URL);
+// Don't log connection string — it contains credentials
 // ── Connection ────────────────────────────────────────────────
 // Supports either DATABASE_URL (Supabase/Render/Heroku style)
 // or individual PG* env vars.
@@ -72,6 +72,48 @@ const SCHEMA_SQL = `
   ALTER TABLE history ADD COLUMN IF NOT EXISTS share_token TEXT UNIQUE;
 
   CREATE INDEX IF NOT EXISTS idx_history_share_token ON history(share_token);
+
+  -- User tiers and access control
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS tier TEXT NOT NULL DEFAULT 'free';
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_limit INTEGER NOT NULL DEFAULT 10;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS approved BOOLEAN NOT NULL DEFAULT false;
+
+  -- Invite codes
+  CREATE TABLE IF NOT EXISTS invite_codes (
+    id              SERIAL PRIMARY KEY,
+    code            TEXT UNIQUE NOT NULL,
+    created_by      TEXT REFERENCES users(email),
+    used_by         TEXT REFERENCES users(email),
+    tier            TEXT NOT NULL DEFAULT 'free',
+    uses_remaining  INTEGER NOT NULL DEFAULT 1,
+    expires_at      TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+
+  -- Daily usage tracking
+  CREATE TABLE IF NOT EXISTS daily_usage (
+    id              SERIAL PRIMARY KEY,
+    user_email      TEXT NOT NULL REFERENCES users(email) ON DELETE CASCADE,
+    usage_date      DATE NOT NULL DEFAULT CURRENT_DATE,
+    query_count     INTEGER NOT NULL DEFAULT 0,
+    tokens_used     INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(user_email, usage_date)
+  );
+  CREATE INDEX IF NOT EXISTS idx_daily_usage_lookup ON daily_usage(user_email, usage_date);
+
+  -- Approve all existing users (pre-migration users should retain access)
+  UPDATE users SET approved = true WHERE approved = false AND created_at < NOW() - INTERVAL '1 second';
+
+  -- Feedback
+  CREATE TABLE IF NOT EXISTS feedback (
+    id            SERIAL PRIMARY KEY,
+    user_email    TEXT,
+    category      TEXT NOT NULL DEFAULT 'general',
+    message       TEXT NOT NULL,
+    browser_info  JSONB,
+    page_url      TEXT,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
 `;
 
 export async function initSchema() {
