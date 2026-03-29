@@ -195,6 +195,15 @@ export async function getInviteCodes() {
   return res.ok ? (await res.json()).codes : [];
 }
 
+export async function getAdminUsers({ limit = 25, offset = 0, search = '' } = {}) {
+  const params = new URLSearchParams();
+  if (limit) params.set('limit', limit);
+  if (offset) params.set('offset', offset);
+  if (search) params.set('search', search);
+  const res = await fetch(`${API_BASE}/admin/users?${params}`, { headers: authHeaders() });
+  return res.ok ? res.json() : { users: [], total: 0, hasMore: false };
+}
+
 export async function getAdminUsage() {
   const res = await fetch(`${API_BASE}/admin/usage`, { headers: authHeaders() });
   return res.ok ? res.json() : null;

@@ -53,8 +53,45 @@ export async function removeUser(email) {
   if (result.rowCount === 0) throw new Error(`User ${email} not found`);
 }
 
-export async function listUsers() {
-  return getAll('SELECT email, name, tier, daily_limit, approved, created_at FROM users ORDER BY created_at');
+export async function listUsers({ limit = 25, offset = 0, search = '' } = {}) {
+  const conditions = [];
+  const params = [];
+  let idx = 1;
+
+  if (search) {
+    conditions.push(`(LOWER(email) LIKE $${idx} OR LOWER(name) LIKE $${idx})`);
+    params.push(`%${search.toLowerCase()}%`);
+    idx++;
+  }
+
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  const countResult = await getOne(
+    `SELECT COUNT(*) as total FROM users ${where}`,
+    params
+  );
+
+  const dataParams = [...params, Math.min(limit, 100), offset];
+  const users = await getAll(
+    `SELECT
+       u.email, u.name, u.tier, u.daily_limit as "dailyLimit",
+       u.approved, u.email_verified as "emailVerified",
+       u.created_at as "createdAt",
+       COALESCE(today.query_count, 0) as "queriesToday",
+       COALESCE(alltime.total, 0) as "queriesAllTime"
+     FROM users u
+     LEFT JOIN daily_usage today ON today.user_email = u.email AND today.usage_date = CURRENT_DATE
+     LEFT JOIN (
+       SELECT user_email, SUM(query_count) as total FROM daily_usage GROUP BY user_email
+     ) alltime ON alltime.user_email = u.email
+     ${where}
+     ORDER BY u.created_at DESC
+     LIMIT $${idx} OFFSET $${idx + 1}`,
+    dataParams
+  );
+
+  const total = parseInt(countResult?.total || 0);
+  return { users, total, hasMore: offset + limit < total };
 }
 
 export async function findUser(email) {
