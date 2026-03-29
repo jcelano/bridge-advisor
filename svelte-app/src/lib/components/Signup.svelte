@@ -10,24 +10,19 @@
   let inviteCode = $state('');
   let turnstileToken = $state('');
   let showInvite = $state(false);
+  let agreedToTerms = $state(false);
   let error = $state('');
   let success = $state('');
   let loading = $state(false);
 
   async function handleSubmit(e) {
     e.preventDefault();
+    if (!agreedToTerms) { error = 'You must agree to the Terms of Service and Privacy Policy'; return; }
     error = ''; success = ''; loading = true;
 
     try {
       const result = await register(email, password, name, inviteCode, turnstileToken);
-
-      if (result.token && result.user) {
-        // Invite code used — auto-logged in
-        onlogin(result.user);
-      } else {
-        // No invite code — access request pending
-        success = result.message || 'Account created. Your access request is pending approval.';
-      }
+      success = result.message || 'Account created! Check your email to verify your address.';
     } catch (err) {
       error = err.message;
     }
@@ -74,6 +69,11 @@
           </button>
         {/if}
 
+        <label class="terms-check">
+          <input type="checkbox" bind:checked={agreedToTerms} />
+          <span>I agree to the <a href="/terms" target="_blank">Terms of Service</a> and <a href="/privacy" target="_blank">Privacy Policy</a></span>
+        </label>
+
         <Turnstile siteKey={turnstileSiteKey} onverify={(t) => turnstileToken = t} />
 
         {#if error}<div class="error">{error}</div>{/if}
@@ -116,6 +116,9 @@
   .submit:disabled { opacity: 0.7; cursor: wait; }
   .link-btn { background: none; border: none; color: #d4af37; cursor: pointer; font-size: 13px; text-decoration: underline; padding: 0; }
   .invite-toggle { margin-bottom: 16px; }
+  .terms-check { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; color: #6a8a6a; margin-bottom: 12px; cursor: pointer; }
+  .terms-check input { margin-top: 2px; accent-color: #d4af37; }
+  .terms-check a { color: #d4af37; }
   .note { font-size: 11px; color: #4a6a4a; text-align: center; margin-top: 12px; }
   .back-row { text-align: center; margin-top: 20px; font-size: 13px; color: #4a6a4a; border-top: 1px solid #1a2430; padding-top: 16px; }
 </style>

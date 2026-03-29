@@ -760,7 +760,7 @@
 {/if}
 
 <!-- Advice Request -->
-{#if tab !== 'saved'}
+{#if tab !== 'saved' && tab !== 'admin'}
   <section class="section" id="advice-section">
     <h2 class="s-title">Ask for Advice</h2>
     <div class="row" style="margin-bottom: 12px">
@@ -773,9 +773,11 @@
       <button class="btn primary lg" onclick={handleGetAdvice} disabled={loading || !canGetAdvice}>
         {loading ? 'Thinking...' : 'Get Advice'}
       </button>
-      <button class="btn" onclick={() => showPromptPreview = !showPromptPreview}>
-        {showPromptPreview ? 'Live Mode' : 'Preview Prompt'}
-      </button>
+      {#if isAdmin}
+        <button class="btn" onclick={() => showPromptPreview = !showPromptPreview}>
+          {showPromptPreview ? 'Live Mode' : 'Preview Prompt'}
+        </button>
+      {/if}
       <button class="btn" onclick={resetAll}>Reset All</button>
     </div>
     {#if !canGetAdvice}
@@ -788,7 +790,7 @@
 {/if}
 
 <!-- Response -->
-{#if (response || loading) && tab !== 'saved'}
+{#if (response || loading) && tab !== 'saved' && tab !== 'admin'}
   <div class="response-box">
     <div class="response-label">{loading ? 'Analyzing...' : "The Stayman Whisperer"}</div>
     {#if loading}

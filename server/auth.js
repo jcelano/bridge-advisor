@@ -34,7 +34,7 @@ export function verifyToken(token) {
 }
 
 // ── User CRUD ─────────────────────────────────────────────────
-export async function createUser(email, password, name, { approved = false, tier = 'free', dailyLimit = 10 } = {}) {
+export async function createUser(email, password, name, { approved = false, tier = 'free', dailyLimit = 5 } = {}) {
   const existing = await getOne('SELECT id FROM users WHERE LOWER(email) = LOWER($1)', [email]);
   if (existing) throw new Error(`User ${email} already exists`);
 
@@ -174,6 +174,39 @@ export async function resetPassword(email, newPassword) {
   );
 }
 
+// ── Email Verification ──────────────────────────────────────────
+export async function generateVerificationToken(email) {
+  const user = await findUser(email);
+  if (!user) return null;
+
+  const rawToken = crypto.randomBytes(32).toString('hex');
+  const hashedToken = crypto.createHash('sha256').update(rawToken).digest('hex');
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+
+  await query(
+    `UPDATE users SET verification_token = $1, verification_token_expires = $2 WHERE LOWER(email) = LOWER($3)`,
+    [hashedToken, expiresAt.toISOString(), email]
+  );
+
+  return rawToken;
+}
+
+export async function verifyEmailToken(rawToken) {
+  if (!rawToken) return null;
+  const hashedToken = crypto.createHash('sha256').update(rawToken).digest('hex');
+  const user = await getOne(
+    `SELECT email, name FROM users WHERE verification_token = $1 AND verification_token_expires > NOW()`,
+    [hashedToken]
+  );
+  if (!user) return null;
+
+  await query(
+    `UPDATE users SET email_verified = true, verification_token = NULL, verification_token_expires = NULL WHERE LOWER(email) = LOWER($1)`,
+    [user.email]
+  );
+  return user;
+}
+
 // ── Login ─────────────────────────────────────────────────────
 export async function loginUser(email, password) {
   const user = await findUser(email);
@@ -182,6 +215,7 @@ export async function loginUser(email, password) {
   const valid = await verifyPassword(password, user.password);
   if (!valid) throw new Error('Invalid email or password');
 
+  if (!user.email_verified) throw new Error('Please verify your email before signing in');
   if (!user.approved) throw new Error('Account pending approval');
 
   return {

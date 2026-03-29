@@ -99,6 +99,39 @@ export async function register(email, password, name, inviteCode, turnstileToken
   return data;
 }
 
+// ── Email Verification API ───────────────────────────────────
+export async function resendVerification(email, turnstileToken) {
+  const res = await fetch(`${API_BASE}/auth/resend-verification`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, turnstileToken }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Request failed');
+  return data;
+}
+
+// ── Stripe API ──────────────────────────────────────────────
+export async function createCheckoutSession() {
+  const res = await fetch(`${API_BASE}/stripe/checkout`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Failed to start checkout');
+  return data;
+}
+
+export async function createPortalSession() {
+  const res = await fetch(`${API_BASE}/stripe/portal`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Failed to open billing portal');
+  return data;
+}
+
 // ── Password Reset API ───────────────────────────────────────
 export async function requestPasswordReset(email, turnstileToken) {
   const res = await fetch(`${API_BASE}/auth/forgot-password`, {
