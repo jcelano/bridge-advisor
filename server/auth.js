@@ -145,7 +145,7 @@ export async function listInviteCodes() {
 
 // ── Admin Operations ────────────────────────────────────────────
 export async function approveUser(email, { tier, dailyLimit } = {}) {
-  const sets = ['approved = true'];
+  const sets = ['approved = true', 'email_verified = true'];
   const params = [email];
   let idx = 2;
 

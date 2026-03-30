@@ -20,7 +20,11 @@
   // ── State ─────────────────────────────────────────────
   let currentUser = $state(getUser());
   let isAdmin = $derived(currentUser?.tier === 'admin');
-  let tab = $state('pbn');
+  const VALID_TABS = ['pbn', 'manual', 'history', 'saved', 'admin'];
+  let tab = $state((() => {
+    try { const t = localStorage.getItem('bridge_advisor_tab'); return VALID_TABS.includes(t) ? t : 'pbn'; }
+    catch { return 'pbn'; }
+  })());
   let pbnText = $state('');
   let mySeat = $state('South');
   let dealer = $state('South');
@@ -43,6 +47,10 @@
   let serverOk = $state(null);
   let history = $state([]);
   let currentState = $derived(buildGameState());
+
+  // Persist tab selection across refreshes (but don't let non-admins land on admin tab)
+  if (tab === 'admin' && !isAdmin) tab = 'pbn';
+  $effect(() => { try { localStorage.setItem('bridge_advisor_tab', tab); } catch {} });
 
   // ── Derived ───────────────────────────────────────────
   let usedCards = $derived(getUsedCards(northHand, eastHand, southHand, westHand));
