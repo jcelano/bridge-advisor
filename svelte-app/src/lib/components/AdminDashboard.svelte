@@ -55,6 +55,7 @@
     await approveUser(email, { tier: 'free' });
     approveMsg = `Approved ${email}`;
     pending = pending.filter(u => u.email !== email);
+    await loadUsers(); // refresh users list to show updated status
     setTimeout(() => approveMsg = '', 3000);
   }
 

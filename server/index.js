@@ -420,6 +420,22 @@ app.post('/api/admin/approve/:email', requireAuth, requireAdmin, async (req, res
     const { tier, dailyLimit } = req.body;
     await approveUser(req.params.email, { tier, dailyLimit });
     log.info('admin', `Approved: ${req.params.email} (tier: ${tier || 'free'})`);
+
+    // Notify the user that their access has been granted
+    sendEmail(req.params.email, 'Your access has been approved — The Stayman Whisperer', `
+      <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 24px; background: #0c1219; color: #c0d0e0; border-radius: 12px;">
+        <div style="text-align: center; margin-bottom: 20px;">
+          <span style="font-size: 36px; color: #d4af37;">♠</span>
+          <h2 style="color: #d4af37; margin: 8px 0 0;">You're In!</h2>
+        </div>
+        <p>Great news — your access request for The Stayman Whisperer has been approved!</p>
+        <p>You can now sign in and start getting AI-powered bridge analysis.</p>
+        <p style="text-align: center; margin: 24px 0;">
+          <a href="${APP_URL}" style="display: inline-block; padding: 12px 28px; background: linear-gradient(135deg, #d4af37, #a08520); color: #0a0a10; text-decoration: none; font-weight: 700; border-radius: 8px;">Sign In Now</a>
+        </p>
+      </div>
+    `);
+
     res.json({ approved: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
